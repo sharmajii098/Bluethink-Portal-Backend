@@ -23,8 +23,6 @@ import java.util.HexFormat;
 public class AccountInvitationService {
     private final AccountInvitationRepository invitations;
     private final RegisterEmployeeRepository accounts;
-    private final UserSessionRepository sessions;
-    private final PasswordResetTokenRepository resets;
     private final JavaMailSender sender;
     private final PasswordEncoder encoder;
     private final String frontendUrl;
@@ -32,10 +30,10 @@ public class AccountInvitationService {
     private final SecureRandom random = new SecureRandom();
 
     public AccountInvitationService(AccountInvitationRepository invitations, RegisterEmployeeRepository accounts,
-                                    JavaMailSender sender, PasswordEncoder encoder, UserSessionRepository sessions, PasswordResetTokenRepository resets,
+                                    JavaMailSender sender, PasswordEncoder encoder,
                                     @Value("${portal.frontend-url:http://localhost:5173}") String frontendUrl,
                                     @Value("${spring.mail.username:}") String mailFrom) {
-        this.sessions = sessions; this.resets = resets; this.invitations = invitations; this.accounts = accounts; this.sender = sender;
+        this.invitations = invitations; this.accounts = accounts; this.sender = sender;
         this.encoder = encoder; this.frontendUrl = frontendUrl; this.mailFrom = mailFrom;
     }
 
@@ -91,31 +89,17 @@ public class AccountInvitationService {
 
     @Transactional
     public void activate(String token, String password) {
-        if (!PasswordResetService.validPassword(password)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                "Use at least 12 characters including a letter and number, within 72 UTF-8 bytes.");
+        if (password == null || password.length() < 12 || password.length() > 128 ||
+            !password.matches("(?s).*[A-Za-z].*") || !password.matches("(?s).*\\d.*")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Use 12–128 characters including a letter and a number.");
         }
         if (!valid(token)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invitation is invalid or expired. Ask HR to resend it.");
         AccountInvitation invitation = invitations.findByTokenHash(hash(token)).orElseThrow();
-        if (invitations.consumeIfValid(invitation.getId(), Instant.now()) != 1)
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invitation is invalid or expired. Ask HR to resend it.");
         RegisterEmployee account = accounts.findById(invitation.getAccountId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Account no longer exists."));
         account.setPassword(encoder.encode(password));
         accounts.save(account);
-        sessions.deactivateEmployeeSessions(account.getUserId());
-        revokeRecoveryLinks(account.getId());
+        invitation.setConsumedAt(Instant.now());
+        invitations.save(invitation);
     }
-    /** Invalidate unfinished password recovery/activation links after any credential change. */
-    @Transactional
-    public void revokeRecoveryLinks(Long accountId) {
-        Instant now = Instant.now();
-        for (AccountInvitation invitation : invitations.findByAccountIdAndConsumedAtIsNull(accountId)) {
-            invitation.setConsumedAt(now); invitations.save(invitation);
-        }
-        for (PasswordResetToken reset : resets.findByAccountIdAndConsumedAtIsNull(accountId)) {
-            reset.setConsumedAt(now); resets.save(reset);
-        }
-    }
-
 }

@@ -61,7 +61,6 @@
 //    Optional<Timesheet> findById(Long id);
 //
 //    List<Timesheet> findByEmployeeIdOrderByDateDesc(String employeeId);
-
 //}
 
 
@@ -107,8 +106,6 @@ public interface TimesheetRepository extends JpaRepository<Timesheet, Long> {
      * Employee Timesheet History (Latest First)
      */
     List<Timesheet> findByEmployeeIdOrderByDateDesc(String employeeId);
-
-    java.util.Optional<Timesheet> findByStandupUpdateId(Long standupUpdateId);
 
     /**
      * Check Timesheet for Particular Day

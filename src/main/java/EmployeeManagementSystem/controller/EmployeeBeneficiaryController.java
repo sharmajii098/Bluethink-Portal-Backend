@@ -1,5 +1,4 @@
 package EmployeeManagementSystem.controller;
-import EmployeeManagementSystem.service.RequestScopeService;
 
 import EmployeeManagementSystem.entity.EmployeeBeneficiary;
 import EmployeeManagementSystem.security.jwt.JwtUtil;
@@ -12,18 +11,17 @@ import java.util.*;
 
 @RestController @RequestMapping("/api/beneficiaries")
 public class EmployeeBeneficiaryController{
- private final RequestScopeService scope;
  private final EmployeeBeneficiaryService service; private final JwtUtil jwt; private final EmployeeRepository employees;
- public EmployeeBeneficiaryController(EmployeeBeneficiaryService s,JwtUtil j,EmployeeRepository e,RequestScopeService requestScope){this.scope=requestScope;service=s;jwt=j;employees=e;}
+ public EmployeeBeneficiaryController(EmployeeBeneficiaryService s,JwtUtil j,EmployeeRepository e){service=s;jwt=j;employees=e;}
  private String tok(String a){if(a==null||!a.startsWith("Bearer "))throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,"Authentication required.");return a.substring(7);}
  private String user(String a){return jwt.extractUsername(tok(a));}
  private String role(String a){String r=jwt.extractRole(tok(a));return r==null?"":r.replace("ROLE_","").toUpperCase();}
  private boolean mgmt(String r){return Set.of("ADMIN","HR","MANAGER").contains(r);}
  private RuntimeException bad(Exception e){if(e instanceof SecurityException)return new ResponseStatusException(HttpStatus.FORBIDDEN,e.getMessage());return new ResponseStatusException(HttpStatus.BAD_REQUEST,e.getMessage());}
  @GetMapping("/my") public List<EmployeeBeneficiary> my(@RequestHeader("Authorization")String a){return service.my(user(a));}
- @GetMapping public List<EmployeeBeneficiary> all(@RequestHeader("Authorization")String a){if(!mgmt(role(a)))throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Management access required.");return scope.visibleTo(role(a),user(a),service.all());}
+ @GetMapping public List<EmployeeBeneficiary> all(@RequestHeader("Authorization")String a){if(!mgmt(role(a)))throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Management access required.");return service.all();}
  @PostMapping public EmployeeBeneficiary create(@RequestHeader("Authorization")String a,@RequestBody EmployeeBeneficiary x){String u=user(a);String n=employees.findByRegisterEmployee_UserId(u).map(e->e.getFullName()).orElse(u);try{return service.create(x,u,n);}catch(Exception e){throw bad(e);}}
- @PutMapping("/{id}") public EmployeeBeneficiary update(@PathVariable Long id,@RequestHeader("Authorization")String a,@RequestBody EmployeeBeneficiary x){scope.assertCanAccessById(role(a),user(a),service.all(),id);try{return service.update(id,x,user(a),mgmt(role(a)));}catch(Exception e){throw bad(e);}}
- @DeleteMapping("/{id}") public ResponseEntity<Void> delete(@PathVariable Long id,@RequestHeader("Authorization")String a){scope.assertCanAccessById(role(a),user(a),service.all(),id);try{service.delete(id,user(a),mgmt(role(a)));return ResponseEntity.noContent().build();}catch(Exception e){throw bad(e);}}
- @PatchMapping("/{id}/review") public EmployeeBeneficiary review(@PathVariable Long id,@RequestHeader("Authorization")String a,@RequestBody Map<String,Object>b){scope.assertCanReviewById(role(a),user(a),service.all(),id);if(!mgmt(role(a)))throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Management access required.");try{return service.review(id,String.valueOf(b.get("status")),String.valueOf(b.getOrDefault("comment","")),user(a));}catch(Exception e){throw bad(e);}}
+ @PutMapping("/{id}") public EmployeeBeneficiary update(@PathVariable Long id,@RequestHeader("Authorization")String a,@RequestBody EmployeeBeneficiary x){try{return service.update(id,x,user(a),mgmt(role(a)));}catch(Exception e){throw bad(e);}}
+ @DeleteMapping("/{id}") public ResponseEntity<Void> delete(@PathVariable Long id,@RequestHeader("Authorization")String a){try{service.delete(id,user(a),mgmt(role(a)));return ResponseEntity.noContent().build();}catch(Exception e){throw bad(e);}}
+ @PatchMapping("/{id}/review") public EmployeeBeneficiary review(@PathVariable Long id,@RequestHeader("Authorization")String a,@RequestBody Map<String,Object>b){if(!mgmt(role(a)))throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Management access required.");try{return service.review(id,String.valueOf(b.get("status")),String.valueOf(b.getOrDefault("comment","")),user(a));}catch(Exception e){throw bad(e);}}
 }

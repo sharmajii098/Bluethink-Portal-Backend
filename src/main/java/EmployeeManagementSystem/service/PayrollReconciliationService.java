@@ -85,7 +85,7 @@ public class PayrollReconciliationService {
   LocalDate end=null;
   for(EmployeeSeparation separation:separations.findAll())if(Objects.equals(separation.getUserId(),profile.getUserId())&&("APPROVED".equals(separation.getStatus())||"COMPLETED".equals(separation.getStatus()))){end=separation.getLastWorkingDate();source.add("SEPARATION:"+separation.getId()+":"+end+":"+separation.getStatus()+":"+separation.getUpdatedAt());}
   source.add("EMPLOYEE:"+employee.getId()+":"+profile.getUserId()+":"+employee.getJoiningDate()+":"+end+":"+profile.getStatus());
-  Map<LocalDate,List<Attendance>> punches=attendance.findByEmployeeAndAiDateRange(employee,first,last).stream().collect(Collectors.groupingBy(a->a.getDate()!=null?a.getDate():a.getAttendanceDate()));
+  Map<LocalDate,List<Attendance>> punches=attendance.findByEmployeeAndDateRange(employee,first,last).stream().collect(Collectors.groupingBy(a->a.getDate()!=null?a.getDate():a.getAttendanceDate()));
   List<LeaveRequest> approved=leaves.findByEmployeeId(profile.getUserId()).stream().filter(l->l.getStatus()==LeaveStatus.APPROVED&&l.getStartDate()!=null&&l.getEndDate()!=null&&!l.getStartDate().isAfter(last)&&!l.getEndDate().isBefore(first)).toList();
   Set<LocalDate> approvedTimesheets=new HashSet<>();
   for(Timesheet t:timesheets.findByEmployeeIdAndDateBetween(profile.getUserId(),first,last)){source.add("TIME:"+t.getId()+":"+t.getDate()+":"+t.getStatus());if("APPROVED".equalsIgnoreCase(t.getStatus()))approvedTimesheets.add(t.getDate());}

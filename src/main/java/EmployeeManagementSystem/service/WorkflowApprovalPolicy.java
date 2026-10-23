@@ -11,7 +11,7 @@ public final class WorkflowApprovalPolicy {
         String requester = normalize(requesterRole);
         return switch (reviewer) {
             case "ADMIN" -> "MANAGER".equals(requester) || "HR".equals(requester);
-            case "HR" -> "EMPLOYEE".equals(requester);
+            case "HR" -> "EMPLOYEE".equals(requester) || "MANAGER".equals(requester);
             case "MANAGER" -> "EMPLOYEE".equals(requester) && directReport;
             default -> false;
         };

@@ -57,7 +57,8 @@ public class PasswordResetService {
     }
 
     public static boolean validPassword(String password) {
-        return PasswordPolicy.valid(password);
+        return password != null && password.length() >= 12 && password.length() <= 128
+            && password.matches("(?s).*[A-Za-z].*") && password.matches("(?s).*\\d.*");
     }
 
     /** Called through the Spring service proxy so its transaction commits BEFORE SMTP send. */
@@ -126,7 +127,7 @@ public class PasswordResetService {
     @Transactional
     public void reset(String token, String password) {
         if (!validPassword(password))
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Use at least 12 characters including a letter and number, within 72 UTF-8 bytes.");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Use 12–128 characters including a letter and number.");
         if (!validTokenShape(token))
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Reset link is invalid or expired. Request a new one.");
         PasswordResetToken entry = resets.findByTokenHash(hash(token)).orElseThrow(() ->

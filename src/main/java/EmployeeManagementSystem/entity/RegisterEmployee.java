@@ -8,7 +8,6 @@ import java.time.LocalDateTime;
 
 @Entity
 @Data
-@com.fasterxml.jackson.annotation.JsonIgnoreProperties(value = {"password", "otp", "otpExpiryTime", "employee"}, allowSetters = true)
 public class RegisterEmployee {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

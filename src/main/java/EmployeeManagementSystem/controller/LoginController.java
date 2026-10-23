@@ -90,7 +90,7 @@ public class LoginController {
             userSession.setIsActive(true);
             userSession.setCreatedAt(LocalDateTime.now());
             userSession.setExpiresAt(
-                    LocalDateTime.ofInstant(jwtUtil.extractExpiration(token).toInstant(), java.time.ZoneId.systemDefault())
+                    LocalDateTime.now().plusHours(1)
             );
 
             userSessionRepository.save(userSession);

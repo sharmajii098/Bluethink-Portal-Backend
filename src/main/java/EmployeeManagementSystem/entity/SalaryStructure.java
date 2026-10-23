@@ -33,37 +33,48 @@ public class SalaryStructure {
 
     // Earnings
     @Column(nullable = false, precision = 10, scale = 2)
+    @Builder.Default
     private BigDecimal basicSalary = BigDecimal.ZERO;
 
     @Column(nullable = false, precision = 10, scale = 2)
+    @Builder.Default
     private BigDecimal hra = BigDecimal.ZERO;
 
     @Column(nullable = false, precision = 10, scale = 2)
+    @Builder.Default
     private BigDecimal conveyance = BigDecimal.ZERO;
 
     @Column(nullable = false, precision = 10, scale = 2)
+    @Builder.Default
     private BigDecimal medicalAllowance = BigDecimal.ZERO;
 
     @Column(nullable = false, precision = 10, scale = 2)
+    @Builder.Default
     private BigDecimal specialAllowance = BigDecimal.ZERO;
 
     @Column(nullable = false, precision = 10, scale = 2)
+    @Builder.Default
     private BigDecimal otherAllowance = BigDecimal.ZERO;
 
     // Deductions
     @Column(nullable = false, precision = 10, scale = 2)
+    @Builder.Default
     private BigDecimal pf = BigDecimal.ZERO;
 
     @Column(nullable = false, precision = 10, scale = 2)
+    @Builder.Default
     private BigDecimal esi = BigDecimal.ZERO;
 
     @Column(nullable = false, precision = 10, scale = 2)
+    @Builder.Default
     private BigDecimal professionalTax = BigDecimal.ZERO;
 
     @Column(nullable = false, precision = 10, scale = 2)
+    @Builder.Default
     private BigDecimal tds = BigDecimal.ZERO;
 
     @Column(nullable = false, precision = 10, scale = 2)
+    @Builder.Default
     private BigDecimal loanDeduction = BigDecimal.ZERO;
 
     @Column(name = "effective_from")

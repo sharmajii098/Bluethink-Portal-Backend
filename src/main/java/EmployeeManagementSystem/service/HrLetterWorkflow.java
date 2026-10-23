@@ -41,7 +41,7 @@ public class HrLetterWorkflow {
  }
  @Transactional(readOnly=true) public byte[] preview(Long id){actor.hr();EmployeeLetterRequest x=letters.findById(id).orElseThrow(()->new ResponseStatusException(HttpStatus.NOT_FOUND));authorizePreparation(x);return pdf.render(read(x.getPreparedSnapshot(),LetterPdfService.Snapshot.class),true);}
  @Transactional public void approve(EmployeeLetterRequest x,String reviewer){
-  actor.hr();if(x.getPreparedSnapshot()==null||x.getPreparedBy()==null)throw new IllegalArgumentException("Prepare and preview verified letter data first");
+  actor.hr();if(!"UNDER_REVIEW".equals(x.getStatus()))throw new ResponseStatusException(HttpStatus.CONFLICT,"Only a prepared letter under review can be approved");if(x.getPreparedSnapshot()==null||x.getPreparedBy()==null)throw new IllegalArgumentException("Prepare and preview verified letter data first");
   if(reviewer.equals(x.getPreparedBy())||reviewer.equals(x.getEmployeeUserId()))throw new ResponseStatusException(HttpStatus.FORBIDDEN,"A different HR/Admin must approve this letter; self-approval is prohibited");
   Built current=build(x,read(x.getPreparationInput(),Prepare.class));
   if(!current.fingerprint().equals(x.getLetterSourceFingerprint()))throw new IllegalArgumentException("HR data changed after preparation. Prepare a fresh preview");

@@ -13,7 +13,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -27,9 +26,6 @@ public class AttendanceRegularizationServiceImpl implements AttendanceRegulariza
     private final AttendanceRepository attendance;
     private final EmployeeRepository employees;
     private final ShiftAssignmentRepository shifts;
-
-    @Value("${attendance.timezone:Asia/Kolkata}") private String attendanceTimezone = "Asia/Kolkata";
-    private LocalDateTime attendanceNow() { return LocalDateTime.now(ZoneId.of(attendanceTimezone)); }
 
     @Value("${attendance.office-start:10:00}") private String officeStart;
     @Value("${attendance.grace-minutes:15}") private int graceMinutes;
@@ -92,7 +88,7 @@ public class AttendanceRegularizationServiceImpl implements AttendanceRegulariza
         request.setReviewerUserId(reviewerUserId);
         request.setReviewerName(reviewerName);
         request.setReviewerComment(comment);
-        request.setReviewedAt(attendanceNow());
+        request.setReviewedAt(LocalDateTime.now());
         return requests.saveAndFlush(request);
     }
 
@@ -115,7 +111,7 @@ public class AttendanceRegularizationServiceImpl implements AttendanceRegulariza
                     .map(a -> a.getShift().getStartTime())
                     .orElseGet(() -> LocalTime.parse(officeStart));
             return AttendanceRegularizationRules.calculate(request.getAttendanceDate(),
-                    request.getRequestedCheckIn(), request.getRequestedCheckOut(), attendanceNow(),
+                    request.getRequestedCheckIn(), request.getRequestedCheckOut(), LocalDateTime.now(),
                     scheduledStart, graceMinutes);
         } catch (java.time.format.DateTimeParseException ex) {
             throw new IllegalArgumentException("Invalid office-start setting; use HH:mm.");
@@ -128,11 +124,10 @@ public class AttendanceRegularizationServiceImpl implements AttendanceRegulariza
         AttendanceRegularizationRules.Correction correction = validatedCorrection(request);
         Employee employee = employees.findByRegisterEmployee_UserId(request.getEmployeeUserId())
                 .orElseThrow(() -> new IllegalArgumentException("This account has no linked employee attendance record. Link the employee profile before approval."));
-        employees.lockById(employee.getId());
         Attendance record = attendance.findByEmployeeAndDate(employee, request.getAttendanceDate());
         if (record != null && (record.getStatus() == AttendanceStatus.LEAVE || record.getStatus() == AttendanceStatus.HOLIDAY || record.getStatus() == AttendanceStatus.WEEKEND))
             throw new IllegalArgumentException("Attendance is marked as leave/holiday/weekend; resolve the conflicting status before approving.");
-        if (record != null && request.getAttendanceDate().equals(attendanceNow().toLocalDate())
+        if (record != null && request.getAttendanceDate().equals(LocalDateTime.now().toLocalDate())
                 && record.getCheckInTime() != null && record.getCheckOutTime() == null
                 && record.getStatus() != AttendanceStatus.UNVERIFIED)
             throw new IllegalArgumentException("The employee's shift is still open. Punch out first or approve after the shift ends.");
@@ -144,15 +139,14 @@ public class AttendanceRegularizationServiceImpl implements AttendanceRegulariza
         }
         record.setCheckInTime(correction.checkIn());
         record.setCheckOutTime(correction.checkOut());
-        record.setCheckOutDateTime(request.getAttendanceDate().atTime(correction.checkOut()));
         record.setWorkingHours(correction.workingHours());
         record.setStatus(correction.status());
         record.setRegularizedByRequestId(request.getId());
-        record.setRegularizedAt(attendanceNow());
+        record.setRegularizedAt(LocalDateTime.now());
         // saveAndFlush makes DB constraint failures abort both the attendance and approval update.
         Attendance saved = attendance.saveAndFlush(record);
         request.setAppliedAttendanceId(saved.getId());
-        request.setAppliedAt(attendanceNow());
+        request.setAppliedAt(LocalDateTime.now());
         // Raw login/signoff tracking remains untouched as an audit log. The employee calendar,
         // attendance reports and HR attendance view read the canonical Attendance table.
     }

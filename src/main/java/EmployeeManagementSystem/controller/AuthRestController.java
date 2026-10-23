@@ -41,8 +41,6 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class AuthRestController {
 
-    private final EmployeeManagementSystem.service.AccountInvitationService invitationService;
-    private final EmployeeManagementSystem.security.jwt.JwtUtil jwtUtil;
     private final RegisterEmployeeService registerEmployeeService;
     private final UserSessionRepository userSessionRepository;
     private final AttendanceTrackingRepository attendanceTrackingRepository;
@@ -262,7 +260,7 @@ public class AuthRestController {
             );
 
             userSession.setExpiresAt(
-                    LocalDateTime.ofInstant(jwtUtil.extractExpiration(token).toInstant(), java.time.ZoneId.systemDefault())
+                    loginTime.plusDays(30)
             );
 
             userSessionRepository.save(
@@ -1276,7 +1274,6 @@ public class AuthRestController {
     // ============================================================
 
     @PostMapping("/change-password")
-    @org.springframework.transaction.annotation.Transactional
     public ResponseEntity<?> changePassword(
             @RequestBody ChangePasswordRequest request,
             Authentication authentication) {
@@ -1321,11 +1318,6 @@ public class AuthRestController {
         }
 
 
-        if (!EmployeeManagementSystem.service.PasswordResetService.validPassword(request.getNewPassword())) {
-            return ResponseEntity.badRequest().body(errorResponse(
-                    "Use at least 12 characters including a letter and number, within 72 UTF-8 bytes."));
-        }
-
         String storedPassword =
                 employee.getPassword();
 
@@ -1357,7 +1349,6 @@ public class AuthRestController {
 
         // Password rotation invalidates every existing JWT session for this employee.
         userSessionRepository.deactivateEmployeeSessions(employee.getUserId());
-        invitationService.revokeRecoveryLinks(employee.getId());
 
         return ResponseEntity.ok(
                 java.util.Map.of(

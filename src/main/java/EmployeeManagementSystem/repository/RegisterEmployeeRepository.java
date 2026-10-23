@@ -21,7 +21,7 @@ public interface RegisterEmployeeRepository
     Optional<RegisterEmployee> findByEmail(String email);
     Optional<RegisterEmployee> findByEmailIgnoreCase(String email);
 
-    @Query(value = "SELECT r.* FROM register_employee r JOIN employees e ON e.register_employee_id = r.id WHERE DATE_FORMAT(e.date_of_birth, '%m-%d') BETWEEN DATE_FORMAT(CURDATE(), '%m-%d') AND DATE_FORMAT(DATE_ADD(CURDATE(), INTERVAL 7 DAY), '%m-%d') ORDER BY DATE_FORMAT(e.date_of_birth, '%m-%d') ASC", nativeQuery = true)
+    @Query(value = "SELECT r.* FROM register_employee r JOIN employee e ON e.register_employee_id = r.id WHERE DATE_FORMAT(e.date_of_birth, '%m-%d') BETWEEN DATE_FORMAT(CURDATE(), '%m-%d') AND DATE_FORMAT(DATE_ADD(CURDATE(), INTERVAL 7 DAY), '%m-%d') ORDER BY DATE_FORMAT(e.date_of_birth, '%m-%d') ASC", nativeQuery = true)
     List<RegisterEmployee> findUpcomingBirthdays();
 
     // ============================================================

@@ -97,11 +97,6 @@ public class RegisterEmployeeImpl implements RegisterEmployeeService {
             throw new RuntimeException("Invalid username");
         }
 
-        if (employee.getEmployee() != null && employee.getEmployee().getEmployeeProfile() != null
-                && employee.getEmployee().getEmployeeProfile().getStatus() != null
-                && !"ACTIVE".equalsIgnoreCase(employee.getEmployee().getEmployeeProfile().getStatus())) {
-            throw new RuntimeException("Invalid credentials");
-        }
         if (passwordEncoder.matches(
                 request.getPassword(),
                 employee.getPassword())) {

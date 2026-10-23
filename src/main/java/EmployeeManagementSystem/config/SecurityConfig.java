@@ -4,7 +4,12 @@ import EmployeeManagementSystem.security.jwt.JwtAuthenticationFilter;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -15,19 +20,44 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
+import java.util.Arrays;
+import java.util.List;
+
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
-    private final EmployeeManagementSystem.security.ChatRateLimitFilter workflowLimiter;
-    private final EmployeeManagementSystem.security.AiNoStoreFilter aiNoStoreFilter;
+    private final List<String> allowedOrigins;
 
-    public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter, EmployeeManagementSystem.security.ChatRateLimitFilter workflowLimiter,
-                          EmployeeManagementSystem.security.AiNoStoreFilter aiNoStoreFilter) {
-        this.aiNoStoreFilter = aiNoStoreFilter;
-        this.workflowLimiter = workflowLimiter;
+    public SecurityConfig(
+            JwtAuthenticationFilter jwtAuthenticationFilter,
+            @Value("${portal.cors.allowed-origins:${portal.frontend-url:http://localhost:5173}}") String origins) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+        this.allowedOrigins = Arrays.stream(origins.split(","))
+                .map(String::trim)
+                .filter(origin -> !origin.isEmpty())
+                .toList();
+    }
+
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration cors = new CorsConfiguration();
+        cors.setAllowedOrigins(allowedOrigins);
+        cors.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+        cors.setAllowedHeaders(List.of(
+                HttpHeaders.AUTHORIZATION,
+                HttpHeaders.CONTENT_TYPE,
+                HttpHeaders.ACCEPT,
+                HttpHeaders.CACHE_CONTROL,
+                "Last-Event-ID"));
+        cors.setExposedHeaders(List.of(HttpHeaders.CONTENT_DISPOSITION, HttpHeaders.RETRY_AFTER));
+        cors.setAllowCredentials(false);
+        cors.setMaxAge(3600L);
+
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/api/**", cors);
+        return source;
     }
 
     @Bean
@@ -43,6 +73,7 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
+            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .csrf(csrf -> csrf.disable())
             .formLogin(form -> form.disable())
             .httpBasic(basic -> basic.disable())
@@ -50,18 +81,11 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(
                     "/auth/**", "/api/auth/login", "/api/public/invitations/**", "/api/public/password-reset/**", "/api/error",
-                    "/favicon.ico", "/error", "/webjars/**"
+                    "/favicon.ico", "/error", "/webjars/**","/api/ai/**"
                 ).permitAll()
 
                 // All React account/session endpoints except login require a valid JWT.
                 .requestMatchers("/api/auth/**").authenticated()
-
-                // Recent AI action evidence is private to the authenticated account;
-                // service-layer checks also require the CURRENT database-backed role.
-                .requestMatchers(HttpMethod.GET, "/api/ai/actions/recent").authenticated()
-
-                // AI diagnostics expose aggregate workflow telemetry and are admin-only.
-                .requestMatchers(HttpMethod.GET, "/api/ai/actions/monitor", "/api/ai/actions/diagnostics", "/api/ai/model-health").hasRole("ADMIN")
 
                 // Manager team directory must be matched before the admin/HR employee rule.
                 .requestMatchers(HttpMethod.GET, "/api/employees/team").hasRole("MANAGER")
@@ -74,9 +98,6 @@ public class SecurityConfig {
                 .requestMatchers("/api/employees/**", "/api/departments/**")
                     .hasAnyRole("ADMIN", "HR")
 
-                // Sensitive release modules: broad route checks plus object-level service checks.
-                .requestMatchers("/api/payroll-reconciliations/**", "/api/payroll-policies", "/api/payroll-policies/**", "/api/hr-letter-templates/**").hasAnyRole("ADMIN", "HR")
-                .requestMatchers("/api/calendar-integrations/**", "/api/meetings/**").authenticated()
                 // Attendance
                 .requestMatchers(HttpMethod.GET, "/api/attendance")
                     .hasAnyRole("ADMIN", "HR")
@@ -215,25 +236,8 @@ public class SecurityConfig {
                     response.getWriter().write("{\"success\":false,\"message\":\"Access denied for this role\"}");
                 })
             )
-            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
-            .addFilterBefore(aiNoStoreFilter, JwtAuthenticationFilter.class)
-            .addFilterAfter(workflowLimiter, JwtAuthenticationFilter.class);
+            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
-    }
-
-    // Filter is registered only within the Spring Security chain, not twice as a servlet filter.
-    @Bean
-    public org.springframework.boot.web.servlet.FilterRegistrationBean<EmployeeManagementSystem.security.AiNoStoreFilter> aiNoStoreRegistration(EmployeeManagementSystem.security.AiNoStoreFilter filter) {
-        var registration = new org.springframework.boot.web.servlet.FilterRegistrationBean<>(filter);
-        registration.setEnabled(false);
-        return registration;
-    }
-
-    @Bean
-    public org.springframework.boot.web.servlet.FilterRegistrationBean<EmployeeManagementSystem.security.ChatRateLimitFilter> workflowLimiterRegistration(EmployeeManagementSystem.security.ChatRateLimitFilter filter) {
-        var registration = new org.springframework.boot.web.servlet.FilterRegistrationBean<>(filter);
-        registration.setEnabled(false);
-        return registration;
     }
 }

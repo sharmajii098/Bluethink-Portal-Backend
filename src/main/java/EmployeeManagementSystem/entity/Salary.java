@@ -11,16 +11,12 @@ import java.time.LocalDate;
 @Getter
 @Setter
 @Entity
-@Table(name = "salary", uniqueConstraints = @UniqueConstraint(name="uq_salary_profile_period", columnNames={"employee_profile_id","month","year"}))
+@Table(name = "salary")
 public class Salary {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-    private Long payrollReconciliationId;
-    @Column(length=64) private String payrollSourceFingerprint;
-    private String payrollApprovedBy;
-    private Double overtimePay;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "employee_id")

@@ -21,9 +21,6 @@ public class EmployeeLetterRequest {
  private String preparedBy;
  private LocalDateTime preparedAt;
  private String letterApprovedBy;
- @Lob @com.fasterxml.jackson.annotation.JsonIgnore @Column(columnDefinition="LONGBLOB") private byte[] issuedPdf;
- @Column(length=64) private String issuedPdfHash;
- // HR verified offer fields; never derive compensation from untrusted employee requests.
  private String designation;
  private java.time.LocalDate joiningDate;
  @Column(precision=14,scale=2) private java.math.BigDecimal annualCtc;
@@ -37,6 +34,8 @@ public class EmployeeLetterRequest {
  private String reviewerName;
  @Column(length=1500) private String hrComment;
  private String documentReference;
+ @Lob @com.fasterxml.jackson.annotation.JsonIgnore @Column(columnDefinition="LONGBLOB") private byte[] issuedPdf;
+ @Column(length=64) private String issuedPdfHash;
  private LocalDateTime reviewedAt;
  private LocalDateTime issuedAt;
  private LocalDateTime createdAt;

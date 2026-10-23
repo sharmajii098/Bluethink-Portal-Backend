@@ -21,8 +21,6 @@ public class Attendance {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-    private String correctedBy;
-    @Column(length=1000) private String correctionReason;
     private LocalDateTime correctedAt;
     private LocalDateTime checkOutDateTime;
 
