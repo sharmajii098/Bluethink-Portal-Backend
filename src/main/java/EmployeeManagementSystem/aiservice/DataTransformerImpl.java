@@ -10,9 +10,8 @@ import java.util.List;
 public class DataTransformerImpl implements DataTransformer {
     @Override
     public List<Document> transform(List<Document> documents) {
-       var splitter = new TokenTextSplitter(300, 400, 10, 5000, true, List.of());
-      ///  var splitter = new TokenTextSplitter(true);
-
+        var splitter = new TokenTextSplitter(300, 400, 10, 5000, true,
+                List.of('.', '?', '!', '\n'));
         return splitter.transform(documents);
     }
 }

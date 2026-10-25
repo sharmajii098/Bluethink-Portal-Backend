@@ -55,8 +55,8 @@ public class ChatServiceImpl implements ChatService {
         List<Document> documents = vectorStore.similaritySearch(
                 SearchRequest.builder()
                         .query(userQuery)
-                        .topK(6)
-                        .similarityThreshold(0.3)
+                        .topK(4)
+                        .similarityThreshold(0.4)
                         .build()
         );
         logger.info("Retrieved {} policy chunks in {} ms",
