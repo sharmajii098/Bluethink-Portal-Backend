@@ -19,6 +19,7 @@ import java.util.*;
 @RestController
 @RequestMapping("/api/profile-completion")
 public class ProfileCompletionController {
+    private final EmployeeManagementSystem.service.RequestScopeService scope;
     private final EmployeeProfileRepository profiles;
     private final EmployeeEmergencyContactRepository contacts;
     private final EmployeeComplianceRecordRepository compliance;
@@ -30,7 +31,8 @@ public class ProfileCompletionController {
                                        EmployeeComplianceRecordRepository compliance,
                                        EmployeeEducationRecordRepository education,
                                        EmployeeFamilyMemberRepository family,
-                                       EmployeeDocumentRepository documents) {
+                                       EmployeeDocumentRepository documents, EmployeeManagementSystem.service.RequestScopeService scope) {
+        this.scope = scope;
         this.profiles = profiles;
         this.contacts = contacts;
         this.compliance = compliance;
@@ -47,7 +49,10 @@ public class ProfileCompletionController {
     @GetMapping
     public List<Map<String,Object>> all(Authentication auth) {
         if (!management(auth)) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Management access required.");
-        return profiles.findAll().stream().map(p -> build(p, p.getUserId())).toList();
+        String role = auth.getAuthorities().stream().map(x -> x.getAuthority().replace("ROLE_", ""))
+                .findFirst().orElse("");
+        return scope.visibleTo(role, auth.getName(), profiles.findAll()).stream()
+                .map(p -> build(p, p.getUserId())).toList();
     }
 
     private Map<String,Object> build(EmployeeProfile p, String uid) {

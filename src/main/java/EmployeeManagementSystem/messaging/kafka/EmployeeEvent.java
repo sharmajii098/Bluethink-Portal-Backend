@@ -42,12 +42,9 @@ public class EmployeeEvent {
         this.email = email;
     }
 
+    // Guard against accidental disclosure in future application logging.
     @Override
     public String toString() {
-        return "EmployeeEvent{" +
-                "employeeId=" + employeeId +
-                ", fullName='" + fullName + '\'' +
-                ", email='" + email + '\'' +
-                '}';
+        return "EmployeeEvent{payload=REDACTED}";
     }
 }

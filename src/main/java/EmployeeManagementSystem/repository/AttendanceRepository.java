@@ -25,7 +25,22 @@ public interface AttendanceRepository
     List<Attendance> findByEmployee(
             Employee employee);
 
+    // Uses the primary date, falling back to attendanceDate for legacy records.
+    // Filtering happens in the database rather than loading all history into the AI service.
+    @Query("SELECT a FROM Attendance a WHERE a.employee = :employee " +
+           "AND COALESCE(a.date, a.attendanceDate) BETWEEN :fromDate AND :toDate")
+    List<Attendance> findByEmployeeAndAiDateRange(@Param("employee") Employee employee,
+                                                   @Param("fromDate") LocalDate fromDate,
+                                                   @Param("toDate") LocalDate toDate);
+
+
     List<Attendance> findByCheckInTimeBeforeAndCheckOutTimeIsNull(LocalDateTime cutoff);
+
+    @Query("SELECT a FROM Attendance a JOIN a.employee e JOIN e.registerEmployee u " +
+            "WHERE u.userId = :userId AND a.date BETWEEN :fromDate AND :toDate")
+    List<Attendance> findCalendarRange(@Param("userId") String userId,
+                                       @Param("fromDate") LocalDate fromDate,
+                                       @Param("toDate") LocalDate toDate);
 
     List<Attendance> findByDate(
             LocalDate date);
@@ -33,21 +48,6 @@ public interface AttendanceRepository
     Attendance findByEmployeeAndDate(
             Employee employee,
             LocalDate date);
-
-    @Query("""
-            SELECT a
-            FROM Attendance a
-            WHERE a.employee = :employee
-              AND (
-                    a.date BETWEEN :startDate AND :endDate
-                    OR a.attendanceDate BETWEEN :startDate AND :endDate
-              )
-            """)
-    List<Attendance> findByEmployeeAndDateRange(
-            @Param("employee") Employee employee,
-            @Param("startDate") LocalDate startDate,
-            @Param("endDate") LocalDate endDate);
-
     List<Attendance> findByAttendanceDate(LocalDate attendanceDate);
     List<Attendance> findByAttendanceDateAndWorkMode(LocalDate attendanceDate, WorkMode workMode);
 

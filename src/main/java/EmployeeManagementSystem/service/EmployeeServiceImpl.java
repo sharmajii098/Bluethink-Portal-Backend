@@ -9,11 +9,13 @@ import EmployeeManagementSystem.messaging.kafka.EmployeeEvent;
 import EmployeeManagementSystem.messaging.kafka.EmployeeProducer;
 import EmployeeManagementSystem.repository.EmployeeProfileRepository;
 import EmployeeManagementSystem.repository.EmployeeRepository;
-import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.Nullable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.*;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
@@ -23,7 +25,6 @@ import java.util.List;
 import java.util.Optional;
 
 @Service
-@RequiredArgsConstructor
 public class EmployeeServiceImpl implements EmployeeService {
 
     private final EmployeeRepository employeeRepository;
@@ -35,62 +36,59 @@ public class EmployeeServiceImpl implements EmployeeService {
     // =========================
     private final EmployeeProfileRepository employeeProfileRepository;
 
-    @Override
-    public Employee saveEmployee(Employee employee) {
-
-
-        // Salary mapping
-        if (employee.getSalaries() != null) {
-
-            employee.getSalaries()
-                    .forEach(salary ->
-                            salary.setEmployee(employee)
-                    );
-
-            if (employee.getSalaries() != null) {
-                employee.getSalaries().forEach(salary -> salary.setEmployee(employee));
-            }
-
-
-            // Attendance mapping
-            if (employee.getAttendanceList() != null) {
-                employee.getAttendanceList()
-                        .forEach(a -> a.setEmployee(employee));
-            }
-
-            // Save employee
-            Employee savedEmployee =
-                    employeeRepository.save(employee);
-
-            // Prepare employee name
-            String employeeName = savedEmployee.getFullName();
-
-            if (employeeName == null || employeeName.isBlank()) {
-
-                employeeName =
-                        savedEmployee.getFirstName()
-                                + " "
-                                + savedEmployee.getLastName();
-
-                employee.getAttendanceList()
-                        .forEach(attendance ->
-                                attendance.setEmployee(employee)
-                        );
-            }
-
-
-            // Create Kafka Event
-            EmployeeEvent employeeEvent = new EmployeeEvent(savedEmployee.getId(), employeeName, savedEmployee.getEmail());
-
-            // Publish event
-            employeeProducer.sendEmployeeCreatedEvent(employeeEvent);
-
-            return savedEmployee;
-        }
-
-        return employee;
+    public EmployeeServiceImpl(EmployeeRepository employeeRepository, EmployeeProducer employeeProducer,
+                               EmployeeProfileRepository employeeProfileRepository) {
+        this.employeeRepository = employeeRepository;
+        this.employeeProducer = employeeProducer;
+        this.employeeProfileRepository = employeeProfileRepository;
     }
 
+    @Override
+    @Transactional
+    public Employee saveEmployee(Employee employee) {
+        if (employee == null) {
+            throw new IllegalArgumentException("Employee is required");
+        }
+
+        // A new employee must be saved even if salary or attendance lists are null.
+        if (employee.getSalaries() != null) {
+            employee.getSalaries().forEach(salary -> salary.setEmployee(employee));
+        }
+        if (employee.getAttendanceList() != null) {
+            employee.getAttendanceList().forEach(attendance -> attendance.setEmployee(employee));
+        }
+
+        Employee savedEmployee = employeeRepository.save(employee);
+        String employeeName = savedEmployee.getFullName();
+        if (employeeName == null || employeeName.isBlank()) {
+            employeeName = (java.util.Objects.toString(savedEmployee.getFirstName(), "") + " "
+                    + java.util.Objects.toString(savedEmployee.getLastName(), "")).trim();
+        }
+        if (employeeName.isBlank()) {
+            employeeName = "Employee";
+        }
+
+        // This is a legacy service path; normal Admin/HR registration separately
+        // sends a post-commit activation invitation. Do not wire both emails together.
+        String email = savedEmployee.getEmail();
+        if (savedEmployee.getId() != null && email != null && !email.isBlank()) {
+            EmployeeEvent event = new EmployeeEvent(savedEmployee.getId(), employeeName, email);
+            // Do not publish before the database transaction commits. A best-effort
+            // callback is NOT a durable outbox; failures must be monitored/retried.
+            if (TransactionSynchronizationManager.isActualTransactionActive()
+                    && TransactionSynchronizationManager.isSynchronizationActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        employeeProducer.sendEmployeeCreatedEvent(event);
+                    }
+                });
+            } else {
+                employeeProducer.sendEmployeeCreatedEvent(event);
+            }
+        }
+        return savedEmployee;
+    }
 
     // =========================
     // FIND BY DEPARTMENT

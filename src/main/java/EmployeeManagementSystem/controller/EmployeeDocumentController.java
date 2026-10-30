@@ -4,8 +4,11 @@ import EmployeeManagementSystem.entity.EmployeeDocument;
 import EmployeeManagementSystem.security.jwt.JwtUtil;
 import EmployeeManagementSystem.repository.EmployeeProfileRepository;
 import EmployeeManagementSystem.service.EmployeeDocumentService;
+import EmployeeManagementSystem.service.RequestScopeService;
 
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.ContentDisposition;
+import java.nio.charset.StandardCharsets;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -24,11 +27,13 @@ public class EmployeeDocumentController {
  private final EmployeeDocumentService service;
  private final EmployeeProfileRepository profiles;
  private final JwtUtil jwtUtil;
+ private final RequestScopeService scope;
 
  public EmployeeDocumentController(
          EmployeeDocumentService service,
          EmployeeProfileRepository profiles,
-         JwtUtil jwtUtil) {
+         JwtUtil jwtUtil, RequestScopeService scope) {
+  this.scope = scope;
 
   this.service = service;
   this.profiles = profiles;
@@ -85,10 +90,7 @@ public class EmployeeDocumentController {
 
   String username = user(authorization);
 
-  return service.list(
-          username,
-          mgmt(role(authorization))
-  );
+  return mgmt(role(authorization)) ? scope.visibleTo(role(authorization),username,service.list(username,true)) : service.list(username,false);
  }
 
 
@@ -122,7 +124,12 @@ public class EmployeeDocumentController {
    );
   }
 
-  return service.summary();
+  var documents = scope.visibleTo(role(authorization),user(authorization),service.list(user(authorization),true));
+  return Map.of("total",documents.size(),"pending",documents.stream().filter(d->"PENDING".equals(d.status())).count(),
+      "verified",documents.stream().filter(d->"VERIFIED".equals(d.status())).count(),
+      "rejected",documents.stream().filter(d->"REJECTED".equals(d.status())).count(),
+      "expired",documents.stream().filter(d->d.expired()).count(),
+      "expiringSoon",documents.stream().filter(d->d.expiringSoon()).count());
  }
 
 
@@ -200,6 +207,8 @@ public class EmployeeDocumentController {
                   mgmt(role(authorization))
           );
 
+  if (!username.equals(document.getEmployeeId())) scope.assertCanReview(role(authorization),username,document);
+
   try {
 
    String contentType =
@@ -223,8 +232,10 @@ public class EmployeeDocumentController {
            )
            .header(
                    HttpHeaders.CONTENT_DISPOSITION,
-                   "attachment; filename=\"" + filename + "\""
+                   ContentDisposition.attachment().filename(filename.replaceAll("[\\p{Cntrl}]", "_"), StandardCharsets.UTF_8).build().toString()
            )
+           .header("Cache-Control", "private, no-store")
+           .header("X-Content-Type-Options", "nosniff")
            .body(service.bytes(document));
 
   } catch (Exception e) {
@@ -248,12 +259,15 @@ public class EmployeeDocumentController {
 
   String username = user(authorization);
 
+  EmployeeDocument document = service.getOwned(id,username,mgmt(role(authorization)));
+  boolean reviewing = !username.equals(document.getEmployeeId());
+  if (reviewing) scope.assertCanReview(role(authorization),username,document);
   try {
 
    service.delete(
            id,
            username,
-           mgmt(role(authorization))
+           reviewing
    );
 
    return Map.of(
@@ -292,6 +306,7 @@ public class EmployeeDocumentController {
    );
   }
 
+  scope.assertCanReview(role(authorization),username,service.getOwned(id,username,true));
   try {
 
    return service.review(

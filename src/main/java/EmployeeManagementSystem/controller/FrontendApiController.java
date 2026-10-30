@@ -40,7 +40,6 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import org.springframework.beans.factory.annotation.Value;
 import java.time.LocalTime;
 import java.time.Duration;
-import java.time.ZoneId;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDate;
@@ -54,6 +53,9 @@ import java.util.stream.Collectors;
 @RequestMapping("/api")
 public class FrontendApiController {
     // Configure shift start and grace using ATTENDANCE_OFFICE_START and ATTENDANCE_GRACE_MINUTES.
+    private final EmployeeManagementSystem.service.PortalAuditService portalAudit;
+    @Value("${attendance.timezone:Asia/Kolkata}") private String attendanceTimezone = "Asia/Kolkata";
+    private LocalDateTime attendanceNow(){return LocalDateTime.now(java.time.ZoneId.of(attendanceTimezone));}
     private final EmployeeProfileRepository profileRepo;
     private final RegisterEmployeeRepository registerRepo;
     private final EmployeeRepository employeeRepo;
@@ -64,8 +66,6 @@ public class FrontendApiController {
     private String officeStart;
     @Value("${attendance.grace-minutes:15}")
     private int attendanceGraceMinutes;
-    @Value("${attendance.timezone:${bluethink.business-zone:Asia/Kolkata}}")
-    private String attendanceTimezone;
     private final LeaveRepository leaveRepo;
     private final TimesheetRepository timesheetRepo;
     private final ProjectRepository projectRepo;
@@ -90,7 +90,7 @@ public class FrontendApiController {
     private final EmployeeManagementSystem.service.AccountInvitationService invitationService;
     private final EmployeeManagementSystem.service.NotificationSseService notificationSseService;
 
-    public FrontendApiController(EmployeeProfileRepository profileRepo, RegisterEmployeeRepository registerRepo,
+    public FrontendApiController(EmployeeManagementSystem.service.PortalAuditService portalAudit, EmployeeProfileRepository profileRepo, RegisterEmployeeRepository registerRepo,
                                  EmployeeRepository employeeRepo, DepartmentRepository departmentRepo,
                                  AttendanceRepository attendanceRepo, ShiftAssignmentRepository shiftAssignmentRepo,
                                  LeaveRepository leaveRepo,
@@ -102,6 +102,7 @@ public class FrontendApiController {
                                  LeaveBalanceRepository leaveBalanceRepo, LeaveTypeRepository leaveTypeRepo,
                                  HolidayRepository holidayRepo, WfhRequestRepository wfhRepo, MentorshipAssignmentRepository mentorshipRepo, ObjectMapper objectMapper, PasswordEncoder passwordEncoder,
                                  JavaMailSender mailSender, CredentialSmsService credentialSmsService, EmployeeManagementSystem.service.AccountInvitationService invitationService, EmployeeManagementSystem.service.NotificationSseService notificationSseService) {
+        this.portalAudit=portalAudit;
         this.profileRepo = profileRepo; this.registerRepo = registerRepo; this.employeeRepo = employeeRepo;
         this.departmentRepo = departmentRepo; this.attendanceRepo = attendanceRepo;
         this.shiftAssignmentRepo = shiftAssignmentRepo; this.leaveRepo = leaveRepo;
@@ -120,10 +121,10 @@ public class FrontendApiController {
     @GetMapping("/dashboard/stats")
     public Map<String, Object> dashboard(Authentication auth) {
         String currentRole = role(auth);
-        if (!"ADMIN".equals(currentRole) && !"HR".equals(currentRole)) {
+        // Payroll statistics are confidential even when the frontend hides the cards.
+        if (!Set.of("ADMIN", "HR").contains(currentRole)) {
             return Map.of("role", currentRole);
         }
-
         var dto = dashboardService.getDashboardStats();
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("totalEmployees", dto.getTotalEmployees());
@@ -146,7 +147,7 @@ public class FrontendApiController {
         out.put("monthlyPayroll", dto.getMonthlyPayroll());
         out.put("paymentStatusLabels", dto.getPaymentStatusLabels());
         out.put("paymentStatusCounts", dto.getPaymentStatusCounts());
-        out.put("role", currentRole);
+        out.put("role", role(auth));
         return out;
     }
 
@@ -622,7 +623,13 @@ public class FrontendApiController {
             account.setDesignation(profile.getDesignation());
             if (!text(body.get("role")).isBlank()) account.setRole(normalizeRole(text(body.get("role"))));
             String newPassword = text(body.get("password"));
-            if (!newPassword.isBlank()) account.setPassword(passwordEncoder.encode(newPassword));
+            if (!newPassword.isBlank()) {
+                if (!EmployeeManagementSystem.service.PasswordResetService.validPassword(newPassword))
+                    throw badException("Use at least 12 characters including a letter and number, within 72 UTF-8 bytes.");
+                account.setPassword(passwordEncoder.encode(newPassword));
+                userSessionRepo.deactivateEmployeeSessions(account.getUserId());
+                invitationService.revokeRecoveryLinks(account.getId());
+            }
             Department d = resolveDepartment(text(body.get("department")));
             if (d != null) {
                 account.setDepartmentId(d.getId());
@@ -667,8 +674,12 @@ public class FrontendApiController {
 
     @PatchMapping("/employees/{id}/status")
     @Transactional
-    public Map<String, Object> updateEmployeeStatus(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+    public Map<String, Object> updateEmployeeStatus(Authentication auth, @PathVariable Long id, @RequestBody Map<String, Object> body) {
         EmployeeProfile profile = profileRepo.findById(id).orElseThrow(() -> notFound("Employee"));
+        RegisterEmployee targetAccount = registerRepo.findByUserId(profile.getUserId());
+        if ("HR".equals(role(auth)) && targetAccount != null
+                && Set.of("ADMIN", "HR").contains(normalizeRole(targetAccount.getRole())))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only Admin can modify HR/Admin accounts");
         String status = text(body.get("status")).trim().toUpperCase();
         if (!List.of("ACTIVE", "INACTIVE").contains(status)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Status must be ACTIVE or INACTIVE");
@@ -685,8 +696,12 @@ public class FrontendApiController {
 
     @DeleteMapping("/employees/{id}")
     @Transactional
-    public Map<String, Object> deleteEmployee(@PathVariable Long id) {
+    public Map<String, Object> deleteEmployee(Authentication auth, @PathVariable Long id) {
         EmployeeProfile profile = profileRepo.findById(id).orElseThrow(() -> notFound("Employee"));
+        RegisterEmployee targetAccount = registerRepo.findByUserId(profile.getUserId());
+        if ("HR".equals(role(auth)) && targetAccount != null
+                && Set.of("ADMIN", "HR").contains(normalizeRole(targetAccount.getRole())))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only Admin can modify HR/Admin accounts");
         Employee employee = profile.getEmployee();
         RegisterEmployee account = employee != null ? employee.getRegisterEmployee() : registerRepo.findByUserId(profile.getUserId());
 
@@ -742,12 +757,6 @@ public class FrontendApiController {
 
     // ==================== ATTENDANCE ====================
 
-    @GetMapping("/attendance/context")
-    public Map<String, String> attendanceContext() {
-        ZoneId zone = ZoneId.of(attendanceTimezone);
-        return Map.of("today", LocalDate.now(zone).toString(), "timezone", zone.getId());
-    }
-
     @GetMapping("/attendance")
     public List<Map<String, Object>> allAttendance() {
         return attendanceRepo.findAll().stream()
@@ -755,10 +764,14 @@ public class FrontendApiController {
                 .map(this::attendanceMap).toList();
     }
 
+    @GetMapping("/attendance/context")
+    public Map<String,Object> attendanceContext(){return Map.of("today",attendanceNow().toLocalDate(),"timezone",attendanceTimezone,"serverNow",attendanceNow().atZone(java.time.ZoneId.of(attendanceTimezone)).toOffsetDateTime());}
+
     @GetMapping("/attendance/my")
+    @Transactional
     public List<Map<String, Object>> myAttendance(Authentication auth) {
         return findCurrentEmployee(auth)
-                .map(e -> { expireForgottenAttendance(e);
+                .map(e -> { employeeRepo.lockById(e.getId()); expireForgottenAttendance(e);
                     return attendanceRepo.findByEmployee(e).stream()
                         .sorted(Comparator.comparing(Attendance::getDate, Comparator.nullsLast(Comparator.reverseOrder())))
                         .map(this::attendanceMap).toList(); })
@@ -783,6 +796,21 @@ public class FrontendApiController {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Attendance summary is restricted to management roles");
         LocalDate target = date == null || date.isBlank() ? LocalDate.now() : parseDate(date, "Attendance date");
         String dept = textOrNull(department);
+        if ("MANAGER".equals(r)) {
+            List<Employee> team = employeeRepo.findByReportingManager_Id(currentEmployee(auth).getId()).stream()
+                    .filter(e -> dept == null || (e.getDepartment() != null && dept.equals(e.getDepartment().getDepartmentName())))
+                    .toList();
+            Set<Long> ids = team.stream().map(Employee::getId).collect(Collectors.toSet());
+            List<Attendance> records = attendanceRepo.findByDate(target).stream()
+                    .filter(a -> a.getEmployee() != null && ids.contains(a.getEmployee().getId())).toList();
+            long recorded = records.stream().map(a -> a.getEmployee().getId()).distinct().count();
+            return Map.of("date", target,
+                    "present", records.stream().filter(a -> a.getStatus() == AttendanceStatus.PRESENT).count(),
+                    "late", records.stream().filter(a -> a.getStatus() == AttendanceStatus.LATE).count(),
+                    "absent", records.stream().filter(a -> a.getStatus() == AttendanceStatus.ABSENT).count(),
+                    "leave", records.stream().filter(a -> a.getStatus() == AttendanceStatus.LEAVE).count(),
+                    "unrecorded", Math.max(0, team.size() - recorded), "totalEmployees", team.size(), "recorded", recorded);
+        }
         long present = attendanceRepo.countByDateAndStatusAndDepartment(target, AttendanceStatus.PRESENT, dept);
         long late = attendanceRepo.countByDateAndStatusAndDepartment(target, AttendanceStatus.LATE, dept);
         long absent = attendanceRepo.countByDateAndStatusAndDepartment(target, AttendanceStatus.ABSENT, dept);
@@ -804,17 +832,21 @@ public class FrontendApiController {
         String r = role(auth);
         List<Attendance> source;
         boolean aggregate = employeeId == null && ("ADMIN".equals(r) || "HR".equals(r) || "MANAGER".equals(r));
-        if (employeeId != null && ("ADMIN".equals(r) || "HR".equals(r))) {
-            Employee employee = employeeRepo.findById(employeeId).orElseThrow(() -> notFound("Employee"));
-            source = attendanceRepo.findByEmployee(employee);
+        if ("ADMIN".equals(r) || "HR".equals(r)) {
+            source = employeeId == null ? attendanceRepo.findAll()
+                    : attendanceRepo.findByEmployee(employeeRepo.findById(employeeId).orElseThrow(() -> notFound("Employee")));
         } else if ("MANAGER".equals(r)) {
             Employee manager = currentEmployee(auth);
             Set<Long> ids = employeeRepo.findByReportingManager_Id(manager.getId()).stream().map(Employee::getId).collect(Collectors.toSet());
-            source = attendanceRepo.findAll().stream().filter(a -> a.getEmployee() != null && ids.contains(a.getEmployee().getId())).toList();
+            if (employeeId != null && !ids.contains(employeeId))
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Employee is outside your direct team.");
+            source = attendanceRepo.findAll().stream().filter(a -> a.getEmployee() != null && ids.contains(a.getEmployee().getId()))
+                    .filter(a -> employeeId == null || employeeId.equals(a.getEmployee().getId())).toList();
         } else {
             Employee employee = currentEmployee(auth);
             source = attendanceRepo.findByEmployee(employee);
         }
+        if(month<1||month>12||year<1900||year>2200)throw badException("Invalid calendar month/year");
         java.time.YearMonth ym = java.time.YearMonth.of(year, month);
         List<Attendance> inMonth = source.stream().filter(a -> a.getDate() != null && !a.getDate().isBefore(ym.atDay(1)) && !a.getDate().isAfter(ym.atEndOfMonth())).toList();
         if (aggregate) {
@@ -826,7 +858,7 @@ public class FrontendApiController {
                         long present = day.stream().filter(a -> a.getStatus() == AttendanceStatus.PRESENT).count();
                         long leave = day.stream().filter(a -> a.getStatus() == AttendanceStatus.LEAVE).count();
                         Map<String,Object> m = new LinkedHashMap<>();
-                        m.put("date", entry.getKey()); m.put("status", late > 0 ? AttendanceStatus.LATE : present > 0 ? AttendanceStatus.PRESENT : leave > 0 ? AttendanceStatus.LEAVE : AttendanceStatus.ABSENT);
+                        m.put("date", entry.getKey()); m.put("status", late > 0 ? AttendanceStatus.LATE : present > 0 ? AttendanceStatus.PRESENT : leave > 0 ? AttendanceStatus.LEAVE : day.stream().allMatch(a -> a.getStatus()==AttendanceStatus.ABSENT) ? AttendanceStatus.ABSENT : day.stream().anyMatch(a -> a.getStatus()==AttendanceStatus.HALF_DAY) ? AttendanceStatus.HALF_DAY : AttendanceStatus.UNVERIFIED);
                         m.put("employeeCount", day.size());
                         m.put("workingHours", day.stream().map(Attendance::getWorkingHours).filter(Objects::nonNull).mapToDouble(Double::doubleValue).sum());
                         return m;
@@ -838,9 +870,11 @@ public class FrontendApiController {
     @PostMapping("/attendance/punch-in")
     @Transactional
     public Map<String, Object> punchIn(Authentication auth, @RequestBody(required = false) Map<String, Object> body) {
-        Employee e = currentEmployee(auth);
+        Employee e = employeeRepo.lockById(currentEmployee(auth).getId()).orElseThrow(() -> notFound("Employee"));
         expireForgottenAttendance(e);
-        LocalDate today = LocalDate.now();
+        LocalDate today = attendanceNow().toLocalDate();
+        boolean active=attendanceRepo.findByEmployee(e).stream().anyMatch(x->x.getCheckInTime()!=null&&x.getCheckOutTime()==null&&x.getWorkingHours()==null);
+        if(active)throw new ResponseStatusException(HttpStatus.CONFLICT,"You already have an open session. Punch out before starting another.");
         Attendance a = attendanceRepo.findByEmployeeAndDate(e, today);
         if (a == null) {
             a = new Attendance();
@@ -849,8 +883,9 @@ public class FrontendApiController {
             a.setAttendanceDate(today);
         }
         if (a.getCheckInTime() != null) throw new ResponseStatusException(HttpStatus.CONFLICT, "Already punched in today");
-        LocalDateTime checkIn = LocalDateTime.now();
-        a.setCheckInTime(checkIn);
+        if(a.getStatus()==AttendanceStatus.LEAVE)throw new ResponseStatusException(HttpStatus.CONFLICT,"This date is recorded as leave; contact HR to correct it first.");
+        LocalDateTime checkIn = attendanceNow();
+        a.setCheckInTime(checkIn);a.setWorkingHours(null);a.setCheckOutTime(null);a.setCheckOutDateTime(null);
         // Office start and grace period are deployment settings, not hardcoded UI policy.
         java.time.LocalTime scheduledStart = shiftAssignmentRepo.findByEmployee_IdAndShiftDate(e.getId(), today)
                 .map(shift -> shift.getShift().getStartTime())
@@ -858,7 +893,10 @@ public class FrontendApiController {
         java.time.LocalTime lateCutoff = scheduledStart.plusMinutes(Math.max(0, attendanceGraceMinutes));
         a.setStatus(checkIn.toLocalTime().isAfter(lateCutoff)
                 ? AttendanceStatus.LATE : AttendanceStatus.PRESENT);
-        a.setWorkMode(parseWorkMode(body == null ? null : text(body.get("workMode"))));
+        String mode=body==null?"OFFICE":text(body.get("workMode"));
+        if(mode.isBlank())mode="OFFICE";
+        if(!Set.of("OFFICE","WFH").contains(mode))throw badException("Invalid work mode");
+        a.setWorkMode(WorkMode.valueOf(mode));
         return attendanceMap(attendanceRepo.save(a));
     }
 
@@ -867,48 +905,63 @@ public class FrontendApiController {
     public Map<String, Object> createManualAttendance(Authentication auth, @RequestBody Map<String, Object> body) {
         requireRoles(auth, "ADMIN", "HR");
         Long employeeId = longValue(body.get("employeeId"));
-        Employee employee = employeeRepo.findById(employeeId).orElseThrow(() -> notFound("Employee"));
+        Employee employee = employeeRepo.lockById(employeeId).orElseThrow(() -> notFound("Employee"));
+        String targetUser = employee.getRegisterEmployee()==null?null:employee.getRegisterEmployee().getUserId();
+        if (!EmployeeManagementSystem.service.StaffRequestPolicy.canReview(role(auth),accountRole(targetUser),false,Objects.equals(userId(auth),targetUser)))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Staff attendance corrections require Admin review; self-correction is prohibited. Submit a regularization request.");
         LocalDate date = parseDate(text(body.get("date")), "Attendance date");
+        if(date.isAfter(attendanceNow().toLocalDate()))throw badException("Future attendance cannot be recorded.");
+        String reason=text(body.get("reason")).trim();
+        if(reason.length()<10||reason.length()>1000)throw badException("Provide a correction reason of 10 to 1000 characters.");
         Attendance a = attendanceRepo.findByEmployeeAndDate(employee, date);
+        if(a!=null&&a.getCheckInTime()!=null&&a.getCheckOutTime()==null&&a.getWorkingHours()==null)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,"An active session cannot be overwritten. Use attendance regularization.");
         if (a == null) { a = new Attendance(); a.setEmployee(employee); a.setDate(date); a.setAttendanceDate(date); }
-        String checkIn = text(body.get("checkInTime"));
-        String checkOut = text(body.get("checkOutTime"));
-        if (!checkIn.isBlank()) a.setCheckInTime(LocalDateTime.parse(checkIn));
-        if (!checkOut.isBlank()) a.setCheckOutTime(java.time.LocalTime.parse(checkOut));
-        if (!text(body.get("workingHours")).isBlank()) a.setWorkingHours(Double.valueOf(text(body.get("workingHours"))));
-        if (!text(body.get("status")).isBlank()) a.setStatus(AttendanceStatus.valueOf(text(body.get("status")).toUpperCase()));
-        if (!text(body.get("workMode")).isBlank()) a.setWorkMode(WorkMode.valueOf(text(body.get("workMode")).toUpperCase()));
-        return attendanceMap(attendanceRepo.save(a));
+        try {
+            String in=text(body.get("checkInTime")),out=text(body.get("checkOutTime"));
+            AttendanceStatus status=AttendanceStatus.valueOf(text(body.get("status")).toUpperCase(Locale.ROOT));
+            WorkMode mode=WorkMode.valueOf(text(body.get("workMode")).toUpperCase(Locale.ROOT));
+            LocalDateTime checkIn=in.isBlank()?null:LocalDateTime.parse(in);
+            LocalDateTime checkOut=out.isBlank()?null:date.atTime(java.time.LocalTime.parse(out));
+            double computedHours=EmployeeManagementSystem.service.AttendanceEntryRules.validate(date,checkIn,checkOut,status.name(),attendanceNow());
+            String previous="Employee="+employeeId+" date="+date+" oldStatus="+a.getStatus()+" oldIn="+a.getCheckInTime()+" oldOut="+a.getCheckOutTime()+" oldHours="+a.getWorkingHours();
+            portalAudit.record(auth,"ATTENDANCE","CORRECT",previous+" newStatus="+status+" newIn="+checkIn+" newOut="+checkOut+" hours="+computedHours+" reason="+reason);
+            a.setCheckInTime(checkIn);a.setCheckOutTime(checkOut==null?null:checkOut.toLocalTime());a.setCheckOutDateTime(checkOut);
+            a.setWorkingHours(computedHours);
+            a.setStatus(status);a.setWorkMode(mode);a.setCorrectedBy(userId(auth));a.setCorrectionReason(reason);a.setCorrectedAt(attendanceNow());
+            return attendanceMap(attendanceRepo.save(a));
+        } catch(IllegalArgumentException|java.time.format.DateTimeParseException ex){throw badException(ex.getMessage());}
     }
 
     @DeleteMapping("/attendance/manual/{id}")
     @Transactional
     public Map<String, Object> deleteManualAttendance(Authentication auth, @PathVariable Long id) {
         requireRoles(auth, "ADMIN", "HR");
-        Attendance a = attendanceRepo.findById(id).orElseThrow(() -> notFound("Attendance"));
-        attendanceRepo.delete(a);
-        return Map.of("success", true, "id", id);
+        throw new ResponseStatusException(HttpStatus.CONFLICT,"Attendance is retained for audit. Submit a correction with a reason instead of deleting the record.");
     }
 
     @PostMapping("/attendance/punch-out")
     @Transactional
     public Map<String, Object> punchOut(Authentication auth) {
-        Employee e = currentEmployee(auth);
+        Employee e = employeeRepo.lockById(currentEmployee(auth).getId()).orElseThrow(() -> notFound("Employee"));
         expireForgottenAttendance(e);
-        Attendance a = attendanceRepo.findByEmployeeAndDate(e, LocalDate.now());
+        Attendance a = attendanceRepo.findByEmployee(e).stream().filter(x->x.getCheckInTime()!=null&&x.getCheckOutTime()==null&&x.getWorkingHours()==null)
+                .max(Comparator.comparing(Attendance::getCheckInTime)).orElse(null);
         if (a == null || a.getCheckInTime() == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Punch in first");
         if (a.getCheckOutTime() != null) throw new ResponseStatusException(HttpStatus.CONFLICT, "Already punched out today");
         if (a.getWorkingHours() != null && a.getWorkingHours() == 0.0)
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This session expired after 24 hours; request attendance regularization.");
-        if (java.time.Duration.between(a.getCheckInTime(), LocalDateTime.now()).toHours() >= 24) {
+        if (java.time.Duration.between(a.getCheckInTime(), attendanceNow()).toHours() >= 24) {
             a.setWorkingHours(0.0);
             a.setStatus(AttendanceStatus.UNVERIFIED);
             // Return the saved unverified record; throwing inside @Transactional would roll back the update.
             return attendanceMap(attendanceRepo.save(a));
         }
-        java.time.LocalTime checkOut = java.time.LocalTime.now();
+        LocalDateTime ended=attendanceNow();
+        java.time.LocalTime checkOut = ended.toLocalTime();
+        a.setCheckOutDateTime(ended);
         a.setCheckOutTime(checkOut);
-        a.setWorkingHours(Math.max(0, java.time.Duration.between(a.getCheckInTime(), LocalDateTime.of(LocalDate.now(), checkOut)).toMinutes() / 60.0));
+        a.setWorkingHours(Math.max(0, java.time.Duration.between(a.getCheckInTime(), ended).toMinutes() / 60.0));
         return attendanceMap(attendanceRepo.save(a));
     }
 
@@ -917,11 +970,11 @@ public class FrontendApiController {
      */
     @Transactional
     private void expireForgottenAttendance(Employee employee) {
-        LocalDateTime threshold = LocalDateTime.now().minusHours(24);
+        LocalDateTime threshold = attendanceNow().minusHours(24);
         for (Attendance record : attendanceRepo.findByEmployee(employee)) {
             if (record.getCheckInTime() != null && record.getCheckOutTime() == null
                     && record.getWorkingHours() == null && !record.getCheckInTime().isAfter(threshold)) {
-                record.setWorkingHours(0.0);
+                record.setWorkingHours(0.0);record.setStatus(AttendanceStatus.UNVERIFIED);
                 // No checkout time is fabricated: an expired punch is not a real checkout.
                 attendanceRepo.save(record);
             }
@@ -939,7 +992,7 @@ public class FrontendApiController {
     public List<WfhRequest> allWfh(Authentication auth) {
         String r = role(auth);
         if (!("ADMIN".equals(r) || "HR".equals(r))) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only Admin or HR can view all WFH requests");
-        return wfhRepo.findAll().stream().sorted(Comparator.comparing(WfhRequest::getCreatedDate, Comparator.nullsLast(Comparator.reverseOrder()))).toList();
+        return wfhRepo.findAll().stream().filter(x -> canReviewWorkflow(auth,x.getEmployeeId())).sorted(Comparator.comparing(WfhRequest::getCreatedDate, Comparator.nullsLast(Comparator.reverseOrder()))).toList();
     }
 
     @GetMapping("/wfh/team")
@@ -948,14 +1001,14 @@ public class FrontendApiController {
         Set<String> teamIds = employeeRepo.findByReportingManager_Id(currentEmployee(auth).getId()).stream()
                 .map(e -> e.getRegisterEmployee() == null ? null : e.getRegisterEmployee().getUserId())
                 .filter(Objects::nonNull).collect(Collectors.toSet());
-        return wfhRepo.findAll().stream().filter(x -> teamIds.contains(x.getEmployeeId()))
+        return wfhRepo.findAll().stream().filter(x -> teamIds.contains(x.getEmployeeId()) && canReviewWorkflow(auth,x.getEmployeeId()))
                 .sorted(Comparator.comparing(WfhRequest::getCreatedDate, Comparator.nullsLast(Comparator.reverseOrder()))).toList();
     }
 
     @PostMapping("/wfh")
     @Transactional
     public WfhRequest applyWfh(Authentication auth, @RequestBody WfhRequest req) {
-        if (!"EMPLOYEE".equals(role(auth))) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only employees can submit WFH requests");
+        requireRoles(auth, "EMPLOYEE", "MANAGER", "HR");
         if (req.getStartDate() == null || req.getEndDate() == null) bad("Start date and end date are required");
         if (req.getEndDate().isBefore(req.getStartDate())) bad("End date cannot be before start date");
         if (text(req.getReason()).isBlank()) bad("Reason is required");
@@ -972,9 +1025,7 @@ public class FrontendApiController {
         WfhRequest req = wfhRepo.findById(id).orElseThrow(() -> notFound("WFH request"));
         String requested = text(body.get("status")).toUpperCase();
         if (!List.of("APPROVED", "REJECTED", "PENDING").contains(requested)) bad("Invalid WFH status");
-        String r = role(auth);
-        if ("MANAGER".equals(r)) assertCanManageUser(auth, req.getEmployeeId());
-        else if (!("ADMIN".equals(r) || "HR".equals(r))) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only Admin, HR or the reporting manager can update WFH requests");
+        assertCanReviewWorkflow(auth, req.getEmployeeId());
         req.setStatus(requested);
         WfhRequest saved = wfhRepo.save(req);
         notifyUser(req.getEmployeeId(), "Your WFH request was " + requested.toLowerCase(Locale.ENGLISH) + " by " + currentName(auth) + ".");
@@ -1069,20 +1120,20 @@ public class FrontendApiController {
             }
             if (requestedManagerEmail.isBlank()) requestedManagerEmail = assignedManagerEmail;
         } else {
-            // Managers may optionally copy an HR/Admin, and HR may optionally copy an Admin.
+            // Managers and HR may optionally notify an Admin.
             // A client-supplied arbitrary address must never become a reviewer.
             boolean eligibleRecipient = false;
             for (RegisterEmployee reviewer : registerRepo.findAll()) {
                 String reviewerRole = normalizeRole(reviewer.getRole());
                 if (requestedManagerEmail.equalsIgnoreCase(text(reviewer.getEmail())) &&
-                        ("MANAGER".equals(applicantRole) && Set.of("HR", "ADMIN").contains(reviewerRole)
+                        ("MANAGER".equals(applicantRole) && "ADMIN".equals(reviewerRole)
                                 || "HR".equals(applicantRole) && "ADMIN".equals(reviewerRole))) {
                     eligibleRecipient = true;
                     break;
                 }
             }
             if (!requestedManagerEmail.isBlank() && !eligibleRecipient) {
-                bad("Choose an existing authorized HR/Admin reviewer, or leave the reviewer blank");
+                bad("Choose an existing Admin reviewer, or leave the reviewer blank");
             }
             req.setReportingManagerName(null);
             req.setReportingManagerEmail(null);
@@ -1213,9 +1264,7 @@ public class FrontendApiController {
         if ("MANAGER".equals(applicantRole) || "HR".equals(applicantRole)) {
             result.put("optionalReviewers", registerRepo.findAll().stream()
                     .filter(account -> !text(account.getEmail()).isBlank())
-                    .filter(account -> "MANAGER".equals(applicantRole)
-                            ? Set.of("ADMIN", "HR").contains(normalizeRole(account.getRole()))
-                            : "ADMIN".equals(normalizeRole(account.getRole())))
+                    .filter(account -> "ADMIN".equals(normalizeRole(account.getRole())))
                     .filter(account -> !Objects.equals(account.getUserId(), userId(auth)))
                     .map(account -> Map.of("email", account.getEmail(), "label",
                             text(account.getName()).isBlank() ? normalizeRole(account.getRole()) : account.getName(),
@@ -1299,8 +1348,7 @@ public class FrontendApiController {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Use your team timesheet view");
         }
         return timesheetRepo.findAll().stream()
-                .filter(t -> !"ADMIN".equals(reviewerRole)
-                        || WorkflowApprovalPolicy.adminCanViewTimesheet(accountRole(t.getEmployeeId())))
+                .filter(t -> canReviewWorkflow(auth,t.getEmployeeId()))
                 .sorted(Comparator.comparing(Timesheet::getDate, Comparator.nullsLast(Comparator.reverseOrder())))
                 .map(t -> timesheetReviewMap(auth, t)).toList();
     }
@@ -1311,11 +1359,9 @@ public class FrontendApiController {
         Set<String> ids = employeeRepo.findByReportingManager_Id(currentEmployee(auth).getId()).stream()
                 .map(e -> e.getRegisterEmployee() == null ? null : e.getRegisterEmployee().getUserId())
                 .filter(Objects::nonNull).collect(Collectors.toSet());
-        // Managers can fill their own timesheet from the same page while also
-        // reviewing direct reports. Keep their own entries in the result set.
-        ids.add(currentUserId);
+        // Personal entries are served by /timesheets/my, separately from the review queue.
         return timesheetRepo.findAll().stream()
-                .filter(t -> ids.contains(t.getEmployeeId()))
+                .filter(t -> ids.contains(t.getEmployeeId()) && canReviewWorkflow(auth,t.getEmployeeId()))
                 .sorted(Comparator.comparing(Timesheet::getDate, Comparator.nullsLast(Comparator.reverseOrder())))
                 .map(t -> timesheetReviewMap(auth, t)).toList();
     }
@@ -1500,6 +1546,9 @@ public class FrontendApiController {
         validateTimesheetEntryDate(t.getDate());
         if (t.getHoursWorked() == null || t.getHoursWorked() <= 0 || t.getHoursWorked() > 24) bad("Hours worked must be between 0 and 24");
         if (text(t.getTaskDescription()).isBlank()) bad("Task description is required");
+        // A deliberate edit in Timesheets takes precedence over future automatic stand-up updates.
+        t.setEntrySource("MANUAL");
+        t.setStandupUpdateId(null);
         if ("REJECTED".equals(existingStatus)) {
             t.setStatus("PENDING");
             t.setApprovalComment(null);
@@ -1526,8 +1575,8 @@ public class FrontendApiController {
             if (!"PENDING".equalsIgnoreCase(text(t.getStatus()))) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Only your pending timesheets can be deleted");
             }
-        } else if (!"HR".equals(r)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Admin may review Manager/HR timesheets but cannot delete timesheets");
+        } else if (!"HR".equals(r) || !canReviewWorkflow(auth,t.getEmployeeId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only the owner of a pending timesheet or HR reviewing an employee timesheet can delete it");
         }
         timesheetRepo.delete(t);
         return Map.of("success", true);
@@ -1825,7 +1874,7 @@ public class FrontendApiController {
         } else {
             rows = salaryRepo.findByReportingManagerId(manager.getId());
         }
-        return rows.stream().map(this::salaryMap).toList();
+        return rows.stream().map(this::managerSalaryMap).toList();
     }
 
     @GetMapping("/salaries/{id}/payslip")
@@ -1839,7 +1888,9 @@ public class FrontendApiController {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                     "You can only view your own payslip or a direct report's payslip");
         }
-        return salaryMap(salary);
+        // A Manager may view the salary of an assigned team member, but must not
+        // receive that person's bank account or tax identifier in the response.
+        return managerTeam && !own ? managerSalaryMap(salary) : salaryMap(salary);
     }
 
     @GetMapping("/salary-structures")
@@ -1921,50 +1972,21 @@ public class FrontendApiController {
     }
 
     @PostMapping("/salaries/manual")
-    @Transactional
     public Map<String, Object> createManualSalary(Authentication auth, @RequestBody Map<String, Object> body) {
         requireRoles(auth, "ADMIN", "HR");
-        Salary salary = new Salary();
-        applyManualSalary(salary, body);
-        return salaryMap(salaryRepo.save(salary));
+        throw new ResponseStatusException(HttpStatus.GONE, "Direct salary entry is retired. Use Payroll Reconciliation and an independent approval.");
     }
 
     @PutMapping("/salaries/manual/{id}")
-    @Transactional
     public Map<String, Object> updateManualSalary(Authentication auth, @PathVariable Long id, @RequestBody Map<String, Object> body) {
         requireRoles(auth, "ADMIN", "HR");
-        Salary salary = salaryRepo.findById(id).orElseThrow(() -> notFound("Salary"));
-        applyManualSalary(salary, body);
-        return salaryMap(salaryRepo.save(salary));
+        throw new ResponseStatusException(HttpStatus.CONFLICT, "Issued payroll amounts are immutable. Record an approved adjustment through your payroll process.");
     }
 
     @DeleteMapping("/salaries/manual/{id}")
-    @Transactional
     public Map<String, Object> deleteManualSalary(Authentication auth, @PathVariable Long id) {
         requireRoles(auth, "ADMIN", "HR");
-        if (!salaryRepo.existsById(id)) throw notFound("Salary");
-        salaryRepo.deleteById(id);
-        return Map.of("success", true, "id", id);
-    }
-
-    private void applyManualSalary(Salary salary, Map<String, Object> body) {
-        Long employeeId = longValue(body.get("employeeId"));
-        Employee employee = employeeRepo.findById(employeeId).orElseThrow(() -> notFound("Employee"));
-        salary.setEmployee(employee);
-        salary.setEmployeeCode(employee.getRegisterEmployee() == null ? null : employee.getRegisterEmployee().getUserId());
-        salary.setEmployeeName(employee.getFullName());
-        salary.setDepartment(employee.getDepartment() == null ? null : employee.getDepartment().getDepartmentName());
-        salary.setDesignation(employee.getRegisterEmployee() == null ? null : employee.getRegisterEmployee().getDesignation());
-        salary.setBasicSalary(number(body.get("basicSalary")));
-        salary.setHra(number(body.get("hra")));
-        salary.setAllowance(number(body.get("allowance")));
-        salary.setBonus(number(body.get("bonus")));
-        salary.setDeductions(number(body.get("deductions")));
-        salary.setGrossSalary((salary.getBasicSalary() == null ? 0 : salary.getBasicSalary()) + (salary.getHra() == null ? 0 : salary.getHra()) + (salary.getAllowance() == null ? 0 : salary.getAllowance()) + (salary.getBonus() == null ? 0 : salary.getBonus()));
-        salary.setNetSalary(salary.getGrossSalary() - (salary.getDeductions() == null ? 0 : salary.getDeductions()));
-        salary.setMonth(text(body.get("month")));
-        salary.setYear(intValue(body.get("year"), LocalDate.now().getYear()));
-        salary.setPaymentStatus(text(body.get("paymentStatus")).isBlank() ? "PENDING" : text(body.get("paymentStatus")).toUpperCase());
+        throw new ResponseStatusException(HttpStatus.CONFLICT, "Payroll records cannot be deleted. Preserve the audit trail and use an approved adjustment.");
     }
 
     private Double number(Object value) {
@@ -1979,6 +2001,10 @@ public class FrontendApiController {
         String status = text(body.get("paymentStatus")).toUpperCase();
         if (status.isBlank()) bad("Payment status is required");
         if (!List.of("PENDING", "PROCESSING", "PAID", "FAILED").contains(status)) bad("Invalid payment status");
+        if (salary.getPayrollReconciliationId() == null)
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Legacy payroll needs a reviewed migration before payment status can change.");
+        if ("PAID".equals(salary.getPaymentStatus()) && !"PAID".equals(status))
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Paid payroll cannot be reopened through a status edit.");
         salary.setPaymentStatus(status);
         if ("PAID".equals(status) && salary.getPaymentDate() == null) salary.setPaymentDate(LocalDate.now());
         if (!"PAID".equals(status)) salary.setPaymentDate(null);
@@ -2275,7 +2301,7 @@ public class FrontendApiController {
     private void assertCanReviewWorkflow(Authentication auth, String requesterId) {
         if (!canReviewWorkflow(auth, requesterId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                    "Only Admin can approve HR leave/timesheets; Admin or HR can review Managers; " +
+                    "Only Admin can approve HR and Manager requests; " +
                     "only HR or the assigned Manager can review employee requests");
         }
     }
@@ -2412,31 +2438,15 @@ public class FrontendApiController {
                 + (text(details).isBlank() ? "." : " · " + details + ".") + " Review required.";
 
         Set<String> recipientUserIds = new LinkedHashSet<>();
-        if (text(activity).toLowerCase(Locale.ENGLISH).startsWith("timesheet")) {
-            String actorRole = role(auth);
-            if ("EMPLOYEE".equals(actorRole)) {
-                reportingManagerFor(actor).map(Employee::getRegisterEmployee)
-                        .map(RegisterEmployee::getUserId).filter(uid -> !text(uid).isBlank())
-                        .ifPresent(recipientUserIds::add);
-            }
-            for (RegisterEmployee account : registerRepo.findAll()) {
-                String recipientRole = accountRole(account.getUserId());
-                if (LeaveWorkflowRules.notifyRole(actorRole, recipientRole)
-                        && !("EMPLOYEE".equals(actorRole) && "MANAGER".equals(recipientRole))) {
-                    String uid = text(account.getUserId()).trim();
-                    if (!uid.isBlank()) recipientUserIds.add(uid);
-                }
-            }
-        } else {
-            // Preserve the existing WFH workflow separately from timesheet approvals.
+        String actorRole = role(auth);
+        if ("EMPLOYEE".equals(actorRole)) {
             reportingManagerFor(actor).map(Employee::getRegisterEmployee)
-                    .map(RegisterEmployee::getUserId).filter(uid -> !text(uid).isBlank())
-                    .ifPresent(recipientUserIds::add);
-            for (RegisterEmployee account : registerRepo.findAll()) {
-                if (!"HR".equals(normalizeRole(account.getRole()))) continue;
-                String uid = text(account.getUserId()).trim();
-                if (!uid.isBlank()) recipientUserIds.add(uid);
-            }
+                    .map(RegisterEmployee::getUserId).filter(uid -> !text(uid).isBlank()).ifPresent(recipientUserIds::add);
+        }
+        for (RegisterEmployee account : registerRepo.findAll()) {
+            String reviewerRole = accountRole(account.getUserId());
+            if (LeaveWorkflowRules.notifyRole(actorRole, reviewerRole) && !"MANAGER".equals(reviewerRole))
+                recipientUserIds.add(account.getUserId());
         }
         recipientUserIds.remove(actorUserId);
         recipientUserIds.forEach(uid -> saveNotificationForUser(uid, message));
@@ -2478,9 +2488,9 @@ public class FrontendApiController {
                     + leave.getLeaveType() + "\nDuration: " + leave.getLeaveDurationType()
                     + "\nFrom: " + leave.getStartDate() + "\nTo: " + leave.getEndDate()
                     + "\n\nPlease sign in to approve or reject; replying to this email does not update the request.");
-            mailSender.send(message);
+            EmployeeManagementSystem.service.EmailTemplates.send(mailSender, message);
         } catch (Exception ex) {
-            System.err.println("Leave email delivery failed for request " + leave.getId() + ": " + ex.getClass().getSimpleName());
+            System.err.println("Leave email delivery failed (type=" + ex.getClass().getSimpleName() + ")");
         }
     }
 
@@ -2704,6 +2714,9 @@ public class FrontendApiController {
         m.put("id", a.getId()); m.put("date", a.getDate()); m.put("checkInTime", a.getCheckInTime());
         m.put("checkOutTime", a.getCheckOutTime()); m.put("workingHours", a.getWorkingHours());
         m.put("status", a.getStatus()); m.put("workMode", a.getWorkMode());
+        m.put("correctedBy",a.getCorrectedBy());m.put("correctionReason",a.getCorrectionReason());m.put("correctedAt",a.getCorrectedAt());
+        m.put("checkInInstant",a.getCheckInTime()==null?null:a.getCheckInTime().atZone(java.time.ZoneId.of(attendanceTimezone)).toOffsetDateTime());
+        m.put("checkOutDateTime",a.getCheckOutDateTime());m.put("timezone",attendanceTimezone);
         m.put("regularized", a.getRegularizedByRequestId() != null);
         m.put("regularizedByRequestId", a.getRegularizedByRequestId());
         m.put("regularizedAt", a.getRegularizedAt());
@@ -2723,7 +2736,7 @@ public class FrontendApiController {
         m.put("id", t.getId()); m.put("employeeId", t.getEmployeeId()); m.put("employeeName", t.getEmployeeName());
         m.put("employeeRole", accountRole(t.getEmployeeId()));
         m.put("date", t.getDate()); m.put("hoursWorked", t.getHoursWorked()); m.put("taskDescription", t.getTaskDescription());
-        m.put("workMode", t.getWorkMode()); m.put("status", t.getStatus()); m.put("approvalComment", t.getApprovalComment()); m.put("projectName", t.getProjectName());
+        m.put("workMode", t.getWorkMode()); m.put("entrySource", t.getEntrySource()); m.put("status", t.getStatus()); m.put("approvalComment", t.getApprovalComment()); m.put("projectName", t.getProjectName());
         m.put("projectId", t.getProject() == null ? null : t.getProject().getId());
         MentorshipAssignment learning = t.getMentorshipAssignment();
         m.put("mentorshipId", learning == null ? null : learning.getId());
@@ -2887,6 +2900,29 @@ public class FrontendApiController {
         }).toList();
         m.put("assignedEmployees", assigned);
         return m;
+    }
+
+    /**
+     * Explicit allowlist for Manager direct-report payroll. Fail closed when a new
+     * field is later added to salaryMap: bank, tax and other personal fields do
+     * not silently appear in the Manager's API response.
+     * Admin/HR and self-payslip projections remain unchanged.
+     */
+    private Map<String, Object> managerSalaryMap(Salary s) {
+        Map<String, Object> allFields = salaryMap(s);
+        Map<String, Object> safe = new LinkedHashMap<>();
+        for (String key : List.of(
+                "id", "employeeCode", "employeeName", "department", "designation", "employeeBand",
+                "joiningDate", "daysWorked", "lwpDays", "scheduledWorkingDays", "timesheetPresentDays",
+                "paidLeaveDays", "projectOffDays", "absentDays", "payableDays", "attendanceDeduction",
+                "timesheetCutoffDate", "basicSalary", "hra", "conveyance", "medicalAllowance",
+                "specialAllowance", "otherAllowance", "allowance", "bonus", "grossSalary", "pf", "esi",
+                "professionalTax", "tds", "loanDeduction", "deductions", "netSalary", "paymentStatus",
+                "month", "year", "paymentDate", "generatedBy", "generatedAt", "employeeProfileId",
+                "employeeId")) {
+            if (allFields.containsKey(key)) safe.put(key, allFields.get(key));
+        }
+        return safe;
     }
 
     private Map<String, Object> salaryMap(Salary s) {

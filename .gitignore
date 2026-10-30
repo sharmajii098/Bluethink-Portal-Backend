@@ -1,0 +1,42 @@
+# Java / Maven build output
+target/
+
+# Local secrets and environment configuration
+.jwt-secret
+.env
+.env.*
+!.env.example
+
+# Runtime uploads are intentionally retained in the working project.
+# Uncomment if uploads should never be tracked:
+# uploads/
+
+# IDE / OS files
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+### BlueThink RC4: protected local files
+uploads/
+target/
+dist/
+node_modules/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.crt
+*.sql
+*.sql.gz
+*.db
+*.dump
+*.log
+backups/
+private/

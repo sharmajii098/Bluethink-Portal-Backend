@@ -13,6 +13,9 @@ public interface PolicyService {
 
     Policy get(Long id);
 
+    /** Effective-only read for ordinary authenticated users. */
+    Policy getVisible(Long id);
+
     Policy save(Policy policy);
 
     void delete(Long id);

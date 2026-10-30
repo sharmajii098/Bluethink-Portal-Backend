@@ -12,6 +12,10 @@ public final class AttachmentScanClient {
         return Optional.ofNullable(name).orElse("file").replaceAll("[\\p{Cntrl}\\\\/\"]", "_");
     }
     public static String scan(byte[] bytes, String host, int port) throws IOException {
+        if (bytes == null || bytes.length == 0 || bytes.length > 10*1024*1024)
+            throw new IOException("Unsupported scanner input size");
+        if (host == null || host.isBlank() || port < 1 || port > 65535)
+            throw new IOException("Malware scanner endpoint is not configured");
         try (Socket socket = new Socket()) {
             socket.connect(new InetSocketAddress(host, port), 1500);
             socket.setSoTimeout(5000);

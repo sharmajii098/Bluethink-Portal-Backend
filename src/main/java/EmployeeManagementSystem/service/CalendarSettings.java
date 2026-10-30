@@ -18,12 +18,10 @@ public class CalendarSettings {
   String id=env.getProperty(prefix+"client-id",""),secret=env.getProperty(prefix+"client-secret",""),redirect=env.getProperty(prefix+"redirect-uri","");
   if(!Boolean.parseBoolean(env.getProperty(prefix+"enabled","false"))||id.isBlank()||secret.isBlank()||redirect.isBlank())throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"Calendar provider is not configured");
   IntegrationCrypto.validateKey(key());
-  URI u;try{u=URI.create(redirect);}catch(Exception e){throw new IllegalStateException("Invalid configured calendar redirect URI");}
-  boolean local=Set.of("localhost","127.0.0.1").contains(u.getHost()==null?"":u.getHost());
-  if(u.getHost()==null||u.getFragment()!=null||u.getQuery()!=null||u.getUserInfo()!=null||(!"https".equals(u.getScheme())&&!(local&&"http".equals(u.getScheme()))))throw new IllegalStateException("Calendar redirect must be an HTTPS application URL (localhost HTTP is development only)");
+  if(!CalendarRedirectPolicy.valid(redirect,p) || !CalendarRedirectPolicy.samePortalOrigin(redirect,env.getProperty("portal.frontend-url","http://localhost:5173")))throw new IllegalStateException("Calendar OAuth callback must match the configured portal origin and exact /calendar/oauth/callback/"+p+" route (HTTPS except localhost development)");
   if("google".equals(p))return new Provider(p,id,secret,redirect,"https://accounts.google.com/o/oauth2/v2/auth","https://oauth2.googleapis.com/token","https://www.googleapis.com/auth/calendar.events.owned");
   String tenant=env.getProperty(prefix+"tenant","organizations");
-  if(!Set.of("common","organizations","consumers").contains(tenant)&&!tenant.matches("[0-9a-fA-F-]{36}"))throw new IllegalStateException("Invalid Microsoft tenant");
+  if(!CalendarTenantPolicy.valid(tenant))throw new IllegalStateException("Invalid Microsoft tenant");
   String endpoint="https://login.microsoftonline.com/"+tenant+"/oauth2/v2.0/";
   return new Provider(p,id,secret,redirect,endpoint+"authorize",endpoint+"token","offline_access https://graph.microsoft.com/Calendars.ReadWrite");
  }

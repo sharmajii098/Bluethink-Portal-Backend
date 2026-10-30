@@ -99,20 +99,6 @@ public interface UserSessionRepository
 
 
     // ============================================================
-    // DEACTIVATE ALL SESSIONS
-    // ============================================================
-
-    @Modifying
-    @Transactional
-    @Query("""
-            UPDATE UserSession u
-            SET u.isActive = false,
-                u.logoutAt = CURRENT_TIMESTAMP
-            """)
-    void deactivateAllSessions();
-
-
-    // ============================================================
     // DEACTIVATE ALL ACTIVE SESSIONS FOR EMPLOYEE
     // ============================================================
 

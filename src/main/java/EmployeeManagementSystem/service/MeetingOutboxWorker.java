@@ -33,7 +33,8 @@ public class MeetingOutboxWorker {
             try{
                 MimeMessage message=sender.createMimeMessage();MimeMessageHelper helper=new MimeMessageHelper(message,true,"UTF-8");
                 helper.setFrom(from);helper.setTo(c.recipient());helper.setSubject("BlueThink "+c.kind().toLowerCase()+": "+c.title().replaceAll("[\\r\\n]"," "));
-                helper.setText("Meeting: "+c.title()+"\nStart: "+c.start()+"\nEnd: "+c.end()+"\nLink: "+c.url()+"\nAgenda: "+(c.agenda()==null?"":c.agenda())+"\nStatus: "+("CANCEL".equals(c.kind())?"CANCELLED":"SCHEDULED"));
+                String plain="Meeting: "+c.title()+"\nStart: "+c.start()+"\nEnd: "+c.end()+"\nLink: "+c.url()+"\nAgenda: "+(c.agenda()==null?"":c.agenda())+"\nStatus: "+("CANCEL".equals(c.kind())?"CANCELLED":"SCHEDULED");
+                helper.setText(plain,EmailTemplates.html("Meeting "+c.kind().toLowerCase(),plain,null,null));
                 String calendar=MeetingCalendarText.build(c.meetingId(),c.title(),c.agenda(),c.url(),c.start(),c.end(),c.sequence(),"CANCEL".equals(c.kind()),from,c.recipient());
                 helper.addAttachment("bluethink-meeting.ics",new ByteArrayResource(calendar.getBytes(StandardCharsets.UTF_8)),"text/calendar; charset=UTF-8; method="+("CANCEL".equals(c.kind())?"CANCEL":"REQUEST"));
                 message.setHeader("X-BlueThink-Delivery",String.valueOf(c.id()));sender.send(message);outcome="SENT";

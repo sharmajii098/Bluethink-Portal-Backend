@@ -14,6 +14,9 @@ import java.util.List;
 @Entity
 @Table(name = "employees")
 @Data
+@com.fasterxml.jackson.annotation.JsonIgnoreProperties(value = {
+    "profile", "attendanceList", "salaries", "reportingManager", "registerEmployee", "employeeProfile", "image"
+}, allowSetters = true)
 public class Employee {
 
     @Id

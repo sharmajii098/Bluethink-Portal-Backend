@@ -13,6 +13,10 @@ import java.util.Optional;
 
 @Repository
 public interface EmployeeRepository extends JpaRepository<Employee, Long> {
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("select e from Employee e where e.id = :id")
+    Optional<Employee> lockById(@Param("id") Long id);
+
 
     // ============================================================
     // SEARCH EMPLOYEES

@@ -1,87 +1,23 @@
-# Bluethink Employee Portal — Backend
+## V24.5: AI preview ledger data retention
 
-## Overview
-Spring Boot REST API for the Bluethink Employee Portal. The backend is API-only; the web UI is provided by the React frontend.
+Consumed/cancelled previews now erase their detailed JSON and reviewer target ID atomically, retaining ledger state and commit receipts. Scheduled cleanup also redacts expired/historical action payloads. No database migration is required. Verify this behavior with Spring Boot + MySQL staging transactions before deployment. See root `V24_5_AI_DRAFT_DATA_MINIMIZATION_RELEASE_NOTES.md`.
 
-## Architecture
+> **AI V23.9:** Ollama synchronous chat has dedicated configurable connect/read timeouts. These are not total deadlines, and real model timeout testing is still required. See root `V23_9_AI_OLLAMA_TIMEOUT_RELEASE_NOTES.md`.
 
-```text
-React Frontend
-      |
-      | HTTP/JSON + JWT
-      v
-Spring Boot REST Controllers
-      |
-      v
-Services / Business Logic
-      |
-      v
-Repositories (Spring Data JPA)
-      |
-      v
-MySQL
+> **AI V23.8:** `GET /api/ai/model-health` provides read-only ADMIN-only local circuit/capacity state; no chat content, no provider ping. See top-level release notes.
 
-Cross-cutting:
-- Security/JWT
-- Kafka messaging
-- Mail
-- Validation
-- Global API error handling
-```
+> **V23.7:** AI model recovery guard for repeated Ollama failures; process-local, configurable, with safe Retry-After and offline JDK behavior verification. See root `V23_7_AI_MODEL_RECOVERY_RELEASE_NOTES.md`. No new migrations; live staging tests pending.
 
-### Source layout
+> **BlueThink V23.5:** AI chat failures distinguish model/database/unexpected errors; failed questions stay editable for retry. See top-level V23_5_AI_CHAT_FAILURE_RECOVERY_RELEASE_NOTES.md. Staging tests pending; not production-certified.
 
-```text
-src/main/java/EmployeeManagementSystem/
-├── config/              Application configuration and startup initializers
-├── constants/           Shared constants
-├── controller/          REST API controllers
-├── dto/                 Request/response DTOs
-├── entity/              JPA entities
-├── enums/               Domain enums
-├── exception/           API exception handling
-├── messaging/kafka/     Kafka producer, consumer, events and topic config
-├── repository/          Spring Data repositories
-├── security/jwt/        JWT utility and authentication filter
-├── service/             Business services and implementations
-└── util/                Small shared utilities
-```
+> **BlueThink V23.4:** AI-wide no-store responses including auth/error paths, a separately budgeted AI-chat request limiter, and corrected deny metrics. See top-level V23_4_AI_PRIVACY_RATE_GUARD_RELEASE_NOTES.md. Staging verification required; not production-certified.
 
-The project uses a single layered structure. Domain-specific admin classes are kept in the normal controller/service/repository/entity layers instead of separate `admin_*` package trees.
+# BlueThink backend
 
-## Requirements
-- Java 17+
-- Maven Wrapper (`mvnw.cmd` on Windows)
-- MySQL
-- Kafka when messaging features are enabled
+See `../README.md` for the consolidated release scope, configuration, migration and exact verification evidence. Historical build claims do not apply to this release.
 
-## Run
+Use JDK 21. The Maven source compatibility target remains Java 17. With dependency access, run `mvnw.cmd -B verify` on Windows or `bash mvnw -B verify` on Linux/macOS. The ordinary test task does not enable the opt-in application-context integration test; use a disposable configured environment before setting `HRMS_RUN_INTEGRATION_TESTS=true`.
 
-```powershell
-.\mvnw.cmd clean package -DskipTests
-.\mvnw.cmd spring-boot:run
-```
+For development, export database/JWT/optional service environment variables and run `mvnw.cmd spring-boot:run` or `bash mvnw spring-boot:run`. Default local port is 8081. Administrator bootstrap is disabled; it must be explicitly enabled with a strong configured password for a new local database. Preserve an existing database and upload directories.
 
-## Configuration
-Configure database, JWT, Kafka and mail settings in the application's configuration files/environment variables. Never commit production secrets.
-
-Default local Kafka configuration used by this project is `localhost:9092` unless overridden.
-
-### Policy RAG assistant
-The policy RAG endpoints are disabled by default. To enable them, configure `RAG_ENABLED=true`, `GROQ_API_KEY`, `JINA_API_KEY`, and a MariaDB 11.3+ vector database using `RAG_MARIADB_URL`, `RAG_MARIADB_USERNAME`, and `RAG_MARIADB_PASSWORD`. Groq and Jina credentials must be supplied as environment variables; do not copy keys from the sample application into source files.
-
-`POST /api/rag/ingest` is restricted to HR and admins. It indexes current effective policies from the portal and, optionally, a `file` multipart PDF (maximum 10 MB). Re-run ingestion after policy changes. `POST /api/rag/chat` accepts `{"question":"..."}` and is available to authenticated employees. Policy text and questions are sent to Jina and Groq for embeddings and answers; enable this feature only if that data processing is approved for your organization.
-
-For local use on Windows, run `.\RUN_RAG_BACKEND.ps1` from PowerShell. It prompts for Groq/Jina keys and the MariaDB connection, hides secret input, and sets credentials only for the launched process; nothing is saved in the repository or persistent environment. The database named in the JDBC URL must already exist, and the MariaDB account needs permission to create the RAG vector table.
-
-## API-only rule
-This backend does **not** serve Thymeleaf pages or a server-rendered web UI. All browser functionality belongs in the React frontend.
-
-## Verification
-
-```powershell
-.\mvnw.cmd test
-.\mvnw.cmd clean package
-```
-
-Verify startup reaches `Started ...Application` without `APPLICATION FAILED TO START`.
+Production uses `SPRING_PROFILES_ACTIVE=prod`, default port 8080 and schema validation. Review `../deploy/.env.example`, apply the reviewed incremental migration to staging first, then validate production configuration. No live service or full Maven build was verified in this execution environment.

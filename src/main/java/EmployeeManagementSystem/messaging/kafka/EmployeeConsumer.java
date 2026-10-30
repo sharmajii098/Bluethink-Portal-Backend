@@ -19,7 +19,7 @@ public class EmployeeConsumer {
             groupId = "employee-email-group"
     )
     public void consumeEmployeeCreatedEvent(EmployeeEvent event) {
-        System.out.println("KAFKA CONSUMER: Employee event received" + event);
+        // Never log employee event payloads.
         sendWelcomeEmail(event);
     }
     private void sendWelcomeEmail(EmployeeEvent event) {
@@ -36,10 +36,10 @@ public class EmployeeConsumer {
                             "Regards,\n" +
                             "HR Team"
             );
-            mailSender.send(message);
-            System.out.println("MAIL SENT SUCCESSFULLY TO: "+ event.getEmail());
+            EmployeeManagementSystem.service.EmailTemplates.send(mailSender, message);
+            // SMTP acceptance is not inbox delivery.
         } catch (Exception e) {
-            System.err.println("MAIL SENDING FAILED: "+ e.getMessage());
+            System.err.println("Welcome email not confirmed: " + e.getClass().getSimpleName());
             // Implemented  retying mechanism in kafka - step 1
             throw new RuntimeException("Email sending failed", e);
         }

@@ -13,7 +13,8 @@ public class UserSession {
 
     private String employeeId;
 
-    @Column(columnDefinition = "TEXT")
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @Column(length = 71)
     private String jwtToken;
 
     private Boolean isActive;

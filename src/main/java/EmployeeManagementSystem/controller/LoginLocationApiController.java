@@ -19,8 +19,15 @@ public class LoginLocationApiController {
     private final LoginLocationService locationService;
     private final EmployeeRepository employeeRepository;
 
+    @org.springframework.beans.factory.annotation.Value("${bluethink.business-zone:Asia/Kolkata}")
+    private String businessZone = "Asia/Kolkata";
+
     @GetMapping("/visible")
-    public ResponseEntity<?> visible(Authentication authentication) {
+    public ResponseEntity<?> visible(Authentication authentication,
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate date) {
+        if (authentication == null || !authentication.isAuthenticated() || "anonymousUser".equals(authentication.getName()))
+            return ResponseEntity.status(401).body(Map.of("message", "Sign in to view login locations."));
+        java.time.LocalDate day = date == null ? java.time.LocalDate.now(java.time.ZoneId.of(businessZone)) : date;
         String userId = authentication.getName();
         String role = authentication == null ? "EMPLOYEE" : authentication.getAuthorities().stream()
                 .map(a -> a.getAuthority())
@@ -34,7 +41,7 @@ public class LoginLocationApiController {
         Set<String> allowed = new HashSet<>();
         if ("ADMIN".equals(role) || "HR".equals(role)) {
             // Organization-wide scope: do not apply employee/team filtering to HR/Admin.
-            List<LoginLocation> all = new ArrayList<>(locationService.getAllLoginLocations());
+            List<LoginLocation> all = new ArrayList<>(locationService.forDay(day));
             all.sort(Comparator.comparing(LoginLocation::getLoginTime,
                     Comparator.nullsLast(Comparator.reverseOrder())));
             return ResponseEntity.ok(all);
@@ -50,10 +57,7 @@ public class LoginLocationApiController {
                     .filter(Objects::nonNull).forEach(allowed::add);
         }
 
-        List<LoginLocation> result = allowed.stream()
-                .flatMap(id -> locationService.getByEmployeeId(id).stream())
-                .sorted(Comparator.comparing(LoginLocation::getLoginTime, Comparator.nullsLast(Comparator.reverseOrder())))
-                .collect(Collectors.toList());
+        List<LoginLocation> result = locationService.forEmployeesOnDay(allowed, day);
         return ResponseEntity.ok(result);
     }
 }

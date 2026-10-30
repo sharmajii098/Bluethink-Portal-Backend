@@ -8,8 +8,6 @@ import EmployeeManagementSystem.repository.RegisterEmployeeRepository;
 import EmployeeManagementSystem.repository.chat.ChatReadReceiptRepository;
 import EmployeeManagementSystem.entity.chat.ChatReadReceipt;
 import EmployeeManagementSystem.entity.RegisterEmployee;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -28,9 +26,9 @@ public class TeamChatController {
     private final ChatReadReceiptRepository receipts;
     public TeamChatController(ChatConversationRepository conversations, ChatMessageRepository messages, RegisterEmployeeRepository users, ChatReadReceiptRepository receipts){this.conversations=conversations;this.messages=messages;this.users=users;this.receipts=receipts;}
     private String currentUser(){Authentication a=SecurityContextHolder.getContext().getAuthentication(); if(a==null||!a.isAuthenticated()) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,"Authentication required"); return a.getName();}
-    private ChatConversation memberConversation(Long id){ChatConversation c=conversations.findById(id).orElseThrow(()->new ResponseStatusException(HttpStatus.NOT_FOUND,"Conversation not found")); if(!c.getMembers().contains(currentUser())) throw new ResponseStatusException(HttpStatus.FORBIDDEN,"You are not a member of this conversation"); return c;}
+    private ChatConversation memberConversation(Long id){ChatConversation c=conversations.lockById(id).orElseThrow(()->new ResponseStatusException(HttpStatus.NOT_FOUND,"Conversation not found")); if(!c.getMembers().contains(currentUser())) throw new ResponseStatusException(HttpStatus.FORBIDDEN,"You are not a member of this conversation"); return c;}
     @GetMapping("/conversations") @Transactional(readOnly=true)
-    public List<Map<String,Object>> list(){String user=currentUser(); return conversations.findDistinctByMembersContainingOrderByCreatedAtDesc(user).stream().map(c->{List<ChatMessage> last=messages.findTop1ByConversation_IdOrderByCreatedAtDesc(c.getId()); Map<String,Object> m=new LinkedHashMap<>();m.put("id",c.getId());m.put("title",c.getTitle());m.put("type",c.getType());m.put("members",c.getMembers());m.put("createdAt",c.getCreatedAt());m.put("lastMessage",last.isEmpty()?"":last.get(0).getContent());m.put("lastSender",last.isEmpty()?"":last.get(0).getSender());m.put("lastMessageAt",last.isEmpty()?c.getCreatedAt():last.get(0).getCreatedAt());m.put("unreadCount",messages.countUnreadByConversationAndUsername(c.getId(),user));return m;}).collect(Collectors.toList());}
+    public List<Map<String,Object>> list(){String user=currentUser(); return conversations.findDistinctByMembersContainingOrderByCreatedAtDesc(user).stream().map(c->{List<ChatMessage> last=messages.findTop1ByConversation_IdOrderByCreatedAtDesc(c.getId()); Map<String,Object> m=new LinkedHashMap<>();m.put("id",c.getId());m.put("title",c.getTitle());m.put("type",c.getType());m.put("members",c.getMembers());m.put("createdAt",c.getCreatedAt());m.put("lastMessage",last.isEmpty()?"":last.get(0).getContent());m.put("unreadCount",messages.unread(c.getId(),user));m.put("lastSender",last.isEmpty()?"":last.get(0).getSender());m.put("lastMessageAt",last.isEmpty()?c.getCreatedAt():last.get(0).getCreatedAt());return m;}).collect(Collectors.toList());}
     public record CreateRequest(String title, String type, List<String> usernames) {}
 
     private String currentRole(){
@@ -58,40 +56,26 @@ public class TeamChatController {
             item.put("role",u.getRole()==null?"EMPLOYEE":u.getRole().replace("ROLE_","").toUpperCase(Locale.ROOT)); item.put("designation",u.getDesignation()); item.put("departmentId",u.getDepartmentId()); return item;
         }).collect(Collectors.toList());
     }
-    @PostMapping("/conversations")
-    public Map<String,Object> create(@RequestBody CreateRequest req){String me=currentUser();String type="GROUP".equalsIgnoreCase(req.type())?"GROUP":"DIRECT";Set<String> members=new LinkedHashSet<>();members.add(me);if(req.usernames()!=null)req.usernames().stream().filter(Objects::nonNull).map(String::trim).filter(s->!s.isBlank()).forEach(members::add); RegisterEmployee actor=users.findByUserId(me); for(String username:members){if(username.equals(me))continue; RegisterEmployee target=users.findByUserId(username); if(target==null)throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"User not found: "+username); if(!canChatWith(actor,target))throw new ResponseStatusException(HttpStatus.FORBIDDEN,"You can chat only with HR, managers, and your team members");} if(members.size()<2)throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Add at least one other employee username");if("DIRECT".equals(type)&&members.size()>2)throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Direct messages can have only two participants");String title=req.title()==null||req.title().isBlank()?(type.equals("GROUP")?"New group":"Direct message"):req.title().trim();if(title.length()>120)throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Conversation name must be 120 characters or fewer");ChatConversation c=conversations.save(new ChatConversation(title,type,me,members));return Map.of("id",c.getId(),"title",c.getTitle(),"type",c.getType(),"members",c.getMembers(),"createdAt",c.getCreatedAt());}
+    @PostMapping("/conversations") @Transactional
+    public Map<String,Object> create(@RequestBody CreateRequest req){if(req==null||req.usernames()==null||req.usernames().size()>100)throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Choose between 1 and 100 participants");String me=currentUser();String type="GROUP".equalsIgnoreCase(req.type())?"GROUP":"DIRECT";Set<String> members=new LinkedHashSet<>();members.add(me);if(req.usernames()!=null)req.usernames().stream().filter(Objects::nonNull).map(String::trim).filter(s->!s.isBlank()).forEach(members::add); RegisterEmployee actor=users.findByUserId(me); for(String username:members){if(username.equals(me))continue; RegisterEmployee target=users.findByUserId(username); if(target==null)throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"User not found: "+username); if(!canChatWith(actor,target))throw new ResponseStatusException(HttpStatus.FORBIDDEN,"You can chat only with HR, managers, and your team members");} if(members.size()<2)throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Add at least one other employee username");if("DIRECT".equals(type)&&members.size()>2)throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Direct messages can have only two participants");String title=req.title()==null||req.title().isBlank()?(type.equals("GROUP")?"New group":"Direct message"):req.title().trim();if(title.length()>120)throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Conversation name must be 120 characters or fewer");if("DIRECT".equals(type)){for(ChatConversation existing:conversations.findDistinctByMembersContainingOrderByCreatedAtDesc(me)){if("DIRECT".equals(existing.getType())&&existing.getMembers().equals(members))return Map.of("id",existing.getId(),"title",existing.getTitle(),"type",existing.getType(),"members",existing.getMembers(),"createdAt",existing.getCreatedAt());}}ChatConversation c=conversations.save(new ChatConversation(title,type,me,members));return Map.of("id",c.getId(),"title",c.getTitle(),"type",c.getType(),"members",c.getMembers(),"createdAt",c.getCreatedAt());}
     @GetMapping("/conversations/{id}/messages") @Transactional
-    public List<Map<String,Object>> history(@PathVariable Long id, @RequestParam(required=false) Long before){
-        ChatConversation conversation=memberConversation(id); String reader=currentUser();
-        List<ChatMessage> history=before==null
-                ? messages.findTop100ByConversation_IdOrderByIdDesc(id)
-                : messages.findTop100ByConversation_IdAndIdLessThanOrderByIdDesc(id,before);
-        Collections.reverse(history);
-        for(ChatMessage message:history){
-            if(!message.getSender().equalsIgnoreCase(reader) && !receipts.existsByMessageIdAndUsername(message.getId(),reader))
-                receipts.save(new ChatReadReceipt(message.getId(),reader));
-        }
-        return history.stream().map(m->messageMap(m,conversation)).collect(Collectors.toList());
+    public List<Map<String,Object>> history(@PathVariable Long id,@RequestParam(required=false) Long before) {
+        ChatConversation conversation=memberConversation(id);
+        List<ChatMessage> history=messages.findByConversation_IdAndIdLessThanOrderByIdDesc(id,before==null?Long.MAX_VALUE:before,org.springframework.data.domain.PageRequest.of(0,100));
+        Map<Long,List<ChatReadReceipt>> byMessage=receipts.findByMessageIdIn(history.stream().map(ChatMessage::getId).toList()).stream().collect(Collectors.groupingBy(ChatReadReceipt::getMessageId));
+        return history.stream().sorted(Comparator.comparing(ChatMessage::getId)).map(m->messageMap(m,conversation,byMessage.getOrDefault(m.getId(),List.of()))).toList();
     }
-
     public record ReadRequest(Long throughId) {}
     @PostMapping("/conversations/{id}/read") @Transactional
-    public Map<String,Object> markRead(@PathVariable Long id, @RequestBody ReadRequest request) {
-        memberConversation(id);
-        if(request==null||request.throughId()==null||!messages.existsByIdAndConversation_Id(request.throughId(),id))
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"A message from this conversation is required");
-        String reader=currentUser();
-        PageRequest pageRequest=PageRequest.of(0,100);
-        Page<ChatMessage> page;
-        do {
-            page=messages.findByConversation_IdAndIdLessThanEqualOrderByIdDesc(id,request.throughId(),pageRequest);
-            for(ChatMessage message:page.getContent()){
-                if(!message.getSender().equalsIgnoreCase(reader)&&!receipts.existsByMessageIdAndUsername(message.getId(),reader))
-                    receipts.save(new ChatReadReceipt(message.getId(),reader));
-            }
-            pageRequest=pageRequest.next();
-        } while(page.hasNext());
-        return Map.of("unreadCount",messages.countUnreadByConversationAndUsername(id,reader));
+    public Map<String,Object> markRead(@PathVariable Long id,@RequestBody ReadRequest request) {
+        memberConversation(id);String reader=currentUser();
+        if(request.throughId()==null)throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Last visible message is required");
+        ChatMessage through=messages.findById(request.throughId()).orElseThrow(()->new ResponseStatusException(HttpStatus.NOT_FOUND,"Message not found"));
+        if(!id.equals(through.getConversation().getId()))throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Message belongs to another conversation");
+        List<ChatMessage> visible=messages.findByConversation_IdAndIdLessThanOrderByIdDesc(id,request.throughId()+1,org.springframework.data.domain.PageRequest.of(0,100));
+        Set<Long> read=receipts.findByMessageIdIn(visible.stream().map(ChatMessage::getId).toList()).stream().filter(r->reader.equals(r.getUsername())).map(ChatReadReceipt::getMessageId).collect(Collectors.toSet());
+        for(ChatMessage message:visible)if(!reader.equals(message.getSender())&&!read.contains(message.getId()))receipts.save(new ChatReadReceipt(message.getId(),reader));
+        return Map.of("success",true,"unreadCount",messages.unread(id,reader));
     }
 
     /** Hide a conversation for the current user without deleting other participants' history. */
@@ -133,7 +117,12 @@ public class TeamChatController {
     }
     private Map<String,Object> messageMap(ChatMessage m){return messageMap(m,m.getConversation());}
     private Map<String,Object> messageMap(ChatMessage m, ChatConversation conversation){
-        boolean readByRecipient=receipts.findByMessageId(m.getId()).stream().anyMatch(r->!r.getUsername().equalsIgnoreCase(m.getSender()) && conversation.getMembers().stream().anyMatch(member->member.equalsIgnoreCase(r.getUsername())));
+        return messageMap(m,conversation,receipts.findByMessageId(m.getId()));
+    }
+    private Map<String,Object> messageMap(ChatMessage m,ChatConversation conversation,List<ChatReadReceipt> read){
+        Set<String> readers=read.stream().map(ChatReadReceipt::getUsername).collect(Collectors.toSet());
+        List<String> recipients=conversation.getMembers().stream().filter(u->!u.equals(m.getSender())).toList();
+        boolean readByRecipient=!recipients.isEmpty()&&recipients.stream().allMatch(readers::contains);
         Map<String,Object> result=new LinkedHashMap<>(); result.put("id",m.getId()); result.put("conversationId",conversation.getId()); result.put("sender",m.getSender()); result.put("content",m.getContent()); result.put("createdAt",m.getCreatedAt()); result.put("readByRecipient",readByRecipient); return result;
     }
 }

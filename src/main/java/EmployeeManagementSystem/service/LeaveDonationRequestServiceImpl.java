@@ -136,11 +136,11 @@ public class LeaveDonationRequestServiceImpl implements LeaveDonationRequestServ
             try {
                 applyTransferIfNeeded(request);
                 repo.save(request);
-                System.out.println("Reconciled approved leave donation " + request.getRequestNumber());
+                System.out.println("Reconciled an approved leave donation");
             } catch (RuntimeException ex) {
                 // Do not stop application startup because one historical request is
                 // inconsistent. Keep it unapplied so HR can correct the source data.
-                System.err.println("Unable to reconcile leave donation " + request.getRequestNumber() + ": " + ex.getMessage());
+                System.err.println("Unable to reconcile an approved leave donation (type=" + ex.getClass().getSimpleName() + ")");
             }
         }
     }

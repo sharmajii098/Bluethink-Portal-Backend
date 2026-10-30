@@ -21,6 +21,9 @@ public class StandupUpdate {
  @Column(name="action_notes",length=2000) private String actionNotes;
  @Column(name="created_at",nullable=false) private LocalDateTime createdAt;
  @Column(name="updated_at",nullable=false) private LocalDateTime updatedAt;
+ @Transient private String timesheetSyncStatus;
+ public String getTimesheetSyncStatus(){return timesheetSyncStatus;}
+ public void setTimesheetSyncStatus(String value){timesheetSyncStatus=value;}
  @PrePersist void create(){LocalDateTime n=LocalDateTime.now();createdAt=n;updatedAt=n;if(blockerStatus==null)blockerStatus="NONE";}
  @PreUpdate void update(){updatedAt=LocalDateTime.now();}
  public Long getId(){return id;} public String getEmployeeUsername(){return employeeUsername;} public void setEmployeeUsername(String v){employeeUsername=v;}

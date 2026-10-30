@@ -87,9 +87,7 @@ public class Project {
     @JoinTable(
             name = "project_employees",
             joinColumns = @JoinColumn(name = "project_id"),
-            inverseJoinColumns = @JoinColumn(name = "employee_id"),
-            foreignKey = @ForeignKey(name = "fk_project_employees_project"),
-            inverseForeignKey = @ForeignKey(name = "fk_project_employees_employee")
+            inverseJoinColumns = @JoinColumn(name = "employee_id")
     )
     private List<Employee> assignedEmployees = new ArrayList<>();
 

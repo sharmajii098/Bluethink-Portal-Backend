@@ -6,7 +6,7 @@ public final class LeaveWorkflowRules {
     public static boolean notifyRole(String actor, String recipient) {
         return switch (actor == null ? "" : actor.toUpperCase()) {
             case "EMPLOYEE" -> "HR".equals(recipient) || "MANAGER".equals(recipient);
-            case "MANAGER" -> "HR".equals(recipient) || "ADMIN".equals(recipient);
+            case "MANAGER" -> "ADMIN".equals(recipient);
             case "HR" -> "ADMIN".equals(recipient);
             default -> false;
         };

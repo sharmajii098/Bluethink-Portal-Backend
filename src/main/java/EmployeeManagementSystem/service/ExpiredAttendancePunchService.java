@@ -13,12 +13,17 @@ import java.time.LocalDateTime;
 @Service
 @RequiredArgsConstructor
 public class ExpiredAttendancePunchService {
+    private final jakarta.persistence.EntityManager entityManager;
     private final AttendanceRepository repository;
+    private final EmployeeManagementSystem.repository.EmployeeRepository employees;
+    @org.springframework.beans.factory.annotation.Value("${attendance.timezone:Asia/Kolkata}") private String timezone;
 
     @Scheduled(fixedDelay = 60000L)
     @Transactional
     public void expireMissingPunchOuts() {
-        for (Attendance attendance : repository.findByCheckInTimeBeforeAndCheckOutTimeIsNull(LocalDateTime.now().minusHours(24))) {
+        for (Attendance attendance : repository.findByCheckInTimeBeforeAndCheckOutTimeIsNull(LocalDateTime.now(java.time.ZoneId.of(timezone)).minusHours(24))) {
+            if(attendance.getEmployee()!=null)employees.lockById(attendance.getEmployee().getId());
+            entityManager.refresh(attendance);
             if (attendance.getCheckInTime() == null || attendance.getCheckOutTime() != null || attendance.getStatus() == AttendanceStatus.UNVERIFIED) continue;
             attendance.setWorkingHours(0.0);
             attendance.setStatus(AttendanceStatus.UNVERIFIED);

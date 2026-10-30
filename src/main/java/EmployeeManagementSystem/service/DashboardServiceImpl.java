@@ -652,7 +652,10 @@ public class DashboardServiceImpl implements DashboardService {
                 "WHERE p.onboarding_date BETWEEN :start AND :end " +
                 "GROUP BY p.project_type";
 
-        List<Object[]> results = queryRows(sql, start, end);
+        List<Object[]> results = entityManager.createNativeQuery(sql)
+                .setParameter("start", start)
+                .setParameter("end", end)
+                .getResultList();
 
         List<TechnologyRevenueDTO> dtos = new ArrayList<>();
         for (Object[] row : results) {
@@ -698,7 +701,10 @@ public class DashboardServiceImpl implements DashboardService {
                 "WHERE p.onboarding_date BETWEEN :start AND :end " +
                 "GROUP BY p.project_type";
 
-        List<Object[]> results = queryRows(sql, start, end);
+        List<Object[]> results = entityManager.createNativeQuery(sql)
+                .setParameter("start", start)
+                .setParameter("end", end)
+                .getResultList();
 
         List<TechnologyRevenueDTO> dtos = new ArrayList<>();
         for (Object[] row : results) {
@@ -743,7 +749,10 @@ public class DashboardServiceImpl implements DashboardService {
                 "WHERE p.onboarding_date BETWEEN :start AND :end " +
                 "GROUP BY p.project_type";
 
-        List<Object[]> results = queryRows(sql, start, end);
+        List<Object[]> results = entityManager.createNativeQuery(sql)
+                .setParameter("start", start)
+                .setParameter("end", end)
+                .getResultList();
 
         double c2cRevenue = 0, c2cProfit = 0, c2cLoss = 0;
         double c2mRevenue = 0, c2mProfit = 0, c2mLoss = 0;
@@ -793,22 +802,6 @@ public class DashboardServiceImpl implements DashboardService {
         }
 
         return total;
-    }
-
-    private List<Object[]> queryRows(String sql, LocalDate start, LocalDate end) {
-        List<?> results = entityManager.createNativeQuery(sql)
-                .setParameter("start", start)
-                .setParameter("end", end)
-                .getResultList();
-
-        List<Object[]> rows = new ArrayList<>(results.size());
-        for (Object result : results) {
-            if (!(result instanceof Object[] row)) {
-                throw new IllegalStateException("Expected a multi-column native query result.");
-            }
-            rows.add(row);
-        }
-        return rows;
     }
 
     private BigDecimal calculateMonthRevenue(int year, int month) {

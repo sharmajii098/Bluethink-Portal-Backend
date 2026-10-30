@@ -16,6 +16,8 @@ import org.springframework.stereotype.Service;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.ZoneId;
+import org.springframework.beans.factory.annotation.Value;
 import java.time.YearMonth;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -25,6 +27,7 @@ import java.util.stream.Collectors;
 public class AttendanceCalendarServiceImpl
         implements AttendanceCalendarService {
 
+    @Value("${attendance.timezone:Asia/Kolkata}") private String attendanceTimezone = "Asia/Kolkata";
     private final AttendanceRepository attendanceRepository;
     private final LeaveRepository leaveRepository;
     private final HolidayRepository holidayRepository;
@@ -41,11 +44,7 @@ public class AttendanceCalendarServiceImpl
         LocalDate startDate = yearMonth.atDay(1);
         LocalDate endDate = yearMonth.atEndOfMonth();
 
-        List<Attendance> attendance = attendanceRepository.findAll().stream()
-                .filter(a -> a.getEmployee() != null && a.getEmployee().getRegisterEmployee() != null
-                        && employeeId.equals(a.getEmployee().getRegisterEmployee().getUserId()))
-                .filter(a -> a.getDate() != null && !a.getDate().isBefore(startDate) && !a.getDate().isAfter(endDate))
-                .toList();
+        List<Attendance> attendance = attendanceRepository.findCalendarRange(employeeId, startDate, endDate);
 
         List<LeaveRequest> approvedLeaves =
                 leaveRepository
@@ -100,23 +99,25 @@ public class AttendanceCalendarServiceImpl
             }
         }
 
-        System.out.println("Present Dates : " + presentDates);
-        System.out.println("Leave Dates   : " + leaveDates);
-        System.out.println("Holiday Dates : " + holidayDates);
-        System.out.println("==================================");
+
 
         List<CalendarEventDTO> events = new ArrayList<>();
 
         LocalDate currentDate = startDate;
 
-        LocalDate today = LocalDate.now();
+        LocalDate today = LocalDate.now(ZoneId.of(attendanceTimezone));
 
         while (!currentDate.isAfter(endDate)) {
 
             String title;
             String color;
 
-            if (leaveDates.contains(currentDate)) {
+            final LocalDate day=currentDate;
+            Attendance actual=attendance.stream().filter(a->day.equals(a.getDate())).findFirst().orElse(null);
+            if(actual!=null&&actual.getStatus()!=null){
+                title=actual.getStatus().name();color=presentDates.contains(day)?"#2b7a4b":"#c47b2e";
+            }
+            else if (leaveDates.contains(currentDate)) {
 
                 title = "Leave";
                 color = "#c47b2e";
@@ -147,8 +148,8 @@ public class AttendanceCalendarServiceImpl
             }
             else {
 
-                title = "Absent";
-                color = "#d64545";
+                title = "Unrecorded";
+                color = "#64748b";
             }
 
             events.add(

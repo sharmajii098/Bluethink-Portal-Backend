@@ -75,8 +75,9 @@ public class AttendanceServiceImpl implements AttendanceService {
             if (log.getLoginTime() != null && log.getLogoutTime() != null) {
 
                 Duration duration = Duration.between(log.getLoginTime(), log.getLogoutTime());
+                if(duration.isNegative() || duration.toMinutes()>24*60) continue;
 
-                double hours = duration.toMinutes() / 60.0;
+                double hours = AttendanceWorkRules.workedMinutes(log.getLoginTime(), log.getLogoutTime(), 0) / 60.0;
                 hours = Math.round(hours * 100.0) / 100.0;
 
                 log.setWorkingHours(hours);
@@ -99,7 +100,7 @@ public class AttendanceServiceImpl implements AttendanceService {
 
             if (log.getLoginTime() != null && !signoffTime.isBefore(log.getLoginTime())) {
                 Duration duration = Duration.between(log.getLoginTime(), signoffTime);
-                double updatedHours = duration.toMinutes() / 60.0;
+                double updatedHours = AttendanceWorkRules.workedMinutes(log.getLoginTime(), signoffTime, 0) / 60.0;
                 log.setWorkingHours(Math.round(updatedHours * 100.0) / 100.0);
             }
 

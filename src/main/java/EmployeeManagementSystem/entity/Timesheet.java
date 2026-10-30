@@ -1,29 +1,3 @@
-//package EmployeeManagementSystem.entity;
-//
-//import jakarta.persistence.Entity;
-//import jakarta.persistence.GeneratedValue;
-//import jakarta.persistence.GenerationType;
-//import jakarta.persistence.Id;
-//import lombok.Data;
-//
-//import java.time.LocalDate;
-//
-//@Entity
-////public class Timesheet {
-//    @Id
-//    @GeneratedValue(strategy = GenerationType.IDENTITY)
-//    private Long id;
-//    private String employeeId;
-//    private String employeeName;
-//    private LocalDate date;
-//    private String hoursWorked;
-//    private String taskDescription;
-//    private String workMode;
-//    private String status = "PENDING";
-
-//}
-
-
 package EmployeeManagementSystem.entity;
 
 import jakarta.persistence.*;
@@ -31,7 +5,7 @@ import jakarta.persistence.*;
 import java.time.LocalDate;
 
 @Entity
-@Table(name = "timesheet")
+@Table(name = "timesheet", indexes = @Index(name = "idx_timesheet_employee_date_status", columnList = "employeeId,date,status"))
 public class Timesheet {
 
     @Id
@@ -53,6 +27,14 @@ public class Timesheet {
     private String workMode;
 
     private String status = "PENDING";
+
+    /** Manual edits detach a generated entry from future stand-up synchronization. */
+    @Column(name = "entry_source", length = 20)
+    private String entrySource = "MANUAL";
+
+    /** At most one auto-generated timesheet per stand-up update. */
+    @Column(name = "standup_update_id", unique = true)
+    private Long standupUpdateId;
 
     @Column(name = "approval_comment", length = 1000)
     private String approvalComment;
@@ -104,6 +86,10 @@ public class Timesheet {
     public void setTaskDescription(String taskDescription) { this.taskDescription = taskDescription; }
     public String getWorkMode() { return workMode; }
     public void setWorkMode(String workMode) { this.workMode = workMode; }
+    public String getEntrySource() { return entrySource; }
+    public void setEntrySource(String entrySource) { this.entrySource = entrySource; }
+    public Long getStandupUpdateId() { return standupUpdateId; }
+    public void setStandupUpdateId(Long standupUpdateId) { this.standupUpdateId = standupUpdateId; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public String getApprovalComment() { return approvalComment; }

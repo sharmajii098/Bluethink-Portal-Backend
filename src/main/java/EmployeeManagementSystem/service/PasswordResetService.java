@@ -57,8 +57,7 @@ public class PasswordResetService {
     }
 
     public static boolean validPassword(String password) {
-        return password != null && password.length() >= 12 && password.length() <= 128
-            && password.matches("(?s).*[A-Za-z].*") && password.matches("(?s).*\\d.*");
+        return PasswordPolicy.valid(password);
     }
 
     /** Called through the Spring service proxy so its transaction commits BEFORE SMTP send. */
@@ -106,7 +105,7 @@ public class PasswordResetService {
                 + frontendUrl.replaceAll("/+$", "") + "/reset-password?token=" + reset.token()
                 + "\n\nIf you did not request this change, ignore this email and contact HR if concerned."
                 + "\nDo not forward this link.\n\nBluethink HRMS");
-            mailSender.send(message);
+            EmailTemplates.send(mailSender, message, "Reset your password", frontendUrl.replaceAll("/+$", "") + "/reset-password?token=" + reset.token());
         } catch (Exception failure) {
             // Mark the failed link unusable. Do not leak provider details to an anonymous caller.
             resets.findById(reset.id()).ifPresent(entry -> {
@@ -127,7 +126,7 @@ public class PasswordResetService {
     @Transactional
     public void reset(String token, String password) {
         if (!validPassword(password))
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Use 12–128 characters including a letter and number.");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Use at least 12 characters including a letter and number, within 72 UTF-8 bytes.");
         if (!validTokenShape(token))
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Reset link is invalid or expired. Request a new one.");
         PasswordResetToken entry = resets.findByTokenHash(hash(token)).orElseThrow(() ->

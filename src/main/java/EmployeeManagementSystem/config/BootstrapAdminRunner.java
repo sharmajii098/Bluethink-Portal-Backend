@@ -24,6 +24,7 @@ import java.time.LocalDate;
  */
 @Component
 @RequiredArgsConstructor
+@org.springframework.core.annotation.Order(0)
 public class BootstrapAdminRunner implements ApplicationRunner {
 
     private final RegisterEmployeeRepository registerEmployeeRepository;
@@ -31,13 +32,13 @@ public class BootstrapAdminRunner implements ApplicationRunner {
     private final EmployeeProfileRepository employeeProfileRepository;
     private final PasswordEncoder passwordEncoder;
 
-    @Value("${hrms.bootstrap-admin.enabled:true}")
+    @Value("${hrms.bootstrap-admin.enabled:false}")
     private boolean enabled;
 
     @Value("${hrms.bootstrap-admin.user-id:ADMIN001}")
     private String userId;
 
-    @Value("${hrms.bootstrap-admin.password:admin123}")
+    @Value("${hrms.bootstrap-admin.password:}")
     private String password;
 
     @Value("${hrms.bootstrap-admin.name:System Administrator}")
@@ -70,7 +71,7 @@ public class BootstrapAdminRunner implements ApplicationRunner {
 
             System.out.println("====================================================");
             System.out.println("Bootstrap administrator already exists");
-            System.out.println("User ID : " + existingAdmin.getUserId());
+            System.out.println("User ID : [REDACTED]");
             System.out.println("Role    : " + existingAdmin.getRole());
             System.out.println("====================================================");
 
@@ -90,6 +91,8 @@ public class BootstrapAdminRunner implements ApplicationRunner {
 
         // IMPORTANT:
         // Password must be encoded.
+        if (!EmployeeManagementSystem.service.PasswordPolicy.valid(password))
+            throw new IllegalStateException("Bootstrap admin password must be 12–72 UTF-8 bytes and include letters and numbers.");
         account.setPassword(passwordEncoder.encode(password));
 
         account = registerEmployeeRepository.save(account);
@@ -131,10 +134,10 @@ public class BootstrapAdminRunner implements ApplicationRunner {
         System.out.println("====================================================");
         System.out.println("       BOOTSTRAP ADMINISTRATOR CREATED");
         System.out.println("====================================================");
-        System.out.println("User ID : " + userId);
-        System.out.println("Password: " + password);
+        System.out.println("User ID : [REDACTED]");
+        System.out.println("Password: configured privately; never printed.");
         System.out.println("Role    : ADMIN");
-        System.out.println("Email   : " + email);
+        System.out.println("Email   : [REDACTED]");
         System.out.println("====================================================");
         System.out.println();
     }

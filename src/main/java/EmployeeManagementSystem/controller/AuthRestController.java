@@ -1,4 +1,5 @@
 package EmployeeManagementSystem.controller;
+import EmployeeManagementSystem.security.SessionFingerprint;
 
 import EmployeeManagementSystem.dto.ChangePasswordRequest;
 import EmployeeManagementSystem.dto.LoginRequest;
@@ -15,6 +16,7 @@ import EmployeeManagementSystem.repository.AttendanceTrackingRepository;
 import EmployeeManagementSystem.repository.EmployeeRepository;
 import EmployeeManagementSystem.repository.UserSessionRepository;
 import EmployeeManagementSystem.service.GeofenceService;
+import EmployeeManagementSystem.service.GeofenceDecision;
 import EmployeeManagementSystem.service.LoginLocationService;
 import EmployeeManagementSystem.service.NotificationService;
 import EmployeeManagementSystem.service.RegisterEmployeeService;
@@ -40,7 +42,10 @@ import java.util.Optional;
 @RequestMapping("/api/auth")
 @RequiredArgsConstructor
 public class AuthRestController {
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AuthRestController.class);
 
+    private final EmployeeManagementSystem.service.AccountInvitationService invitationService;
+    private final EmployeeManagementSystem.security.jwt.JwtUtil jwtUtil;
     private final RegisterEmployeeService registerEmployeeService;
     private final UserSessionRepository userSessionRepository;
     private final AttendanceTrackingRepository attendanceTrackingRepository;
@@ -48,8 +53,13 @@ public class AuthRestController {
     private final EmployeeRepository employeeRepository;
     private final ActivityRepository activityRepository;
     private final PasswordEncoder passwordEncoder;
+    @org.springframework.beans.factory.annotation.Autowired
+    private EmployeeManagementSystem.security.LoginAttemptGuard loginAttemptGuard;
     private final GeofenceService geofenceService;
     private final LoginLocationService loginLocationService;
+
+    @org.springframework.beans.factory.annotation.Value("${bluethink.business-zone:Asia/Kolkata}")
+    private String businessZone = "Asia/Kolkata";
     private final NotificationService notificationService;
 
 
@@ -61,6 +71,7 @@ public class AuthRestController {
     public ResponseEntity<LoginResponse> login(
             @RequestBody LoginRequest request) {
 
+        if (request != null) loginAttemptGuard.check(request.getUserId());
         try {
 
             // ----------------------------------------------------
@@ -132,9 +143,9 @@ public class AuthRestController {
                         !"ACTIVE".equalsIgnoreCase(status)) {
 
                     return ResponseEntity
-                            .status(HttpStatus.FORBIDDEN)
+                            .status(HttpStatus.UNAUTHORIZED)
                             .body(errorResponse(
-                                    "Your account is inactive. Please contact the administrator."
+                                    "Invalid User ID or password."
                             ));
                 }
             }
@@ -216,12 +227,17 @@ public class AuthRestController {
                 return ResponseEntity.badRequest().body(errorResponse(
                         "Unable to verify your location. Please retry."));
             }
-            double allowedRadius = office.getAllowedRadius() == null ? 200.0 : office.getAllowedRadius();
-            workMode = distance <= allowedRadius ? "WFO" : "WFH";
+            Double allowedRadius = office.getAllowedRadius();
+            if (allowedRadius == null || !Double.isFinite(allowedRadius) || allowedRadius <= 0 || allowedRadius > 10000)
+                throw new IllegalStateException("Office radius is not configured correctly.");
+            GeofenceDecision.Result gpsDecision = GeofenceDecision.classify(distance, accuracy, allowedRadius);
+            if (gpsDecision == GeofenceDecision.Result.RETRY) {
+                return ResponseEntity.badRequest().body(errorResponse(
+                        "Your GPS accuracy overlaps the office boundary. Move to a location with a clearer signal and retry."));
+            }
+            workMode = gpsDecision.name();
 
-            System.out.println("LOGIN LOCATION: user=" + employee.getUserId()
-                    + ", distanceMeters=" + Math.round(distance)
-                    + ", radiusMeters=" + allowedRadius + ", detectedMode=" + workMode);
+            // Location is personal data; do not emit it into application logs.
 
             // ====================================================
             // SAVE ATTENDANCE
@@ -248,7 +264,7 @@ public class AuthRestController {
             );
 
             userSession.setJwtToken(
-                    token
+                    SessionFingerprint.of(token)
             );
 
             userSession.setIsActive(
@@ -260,7 +276,7 @@ public class AuthRestController {
             );
 
             userSession.setExpiresAt(
-                    loginTime.plusDays(30)
+                    LocalDateTime.ofInstant(jwtUtil.extractExpiration(token).toInstant(), java.time.ZoneId.systemDefault())
             );
 
             userSessionRepository.save(
@@ -290,10 +306,8 @@ public class AuthRestController {
             // SAVE LOGIN LOCATION
             // ====================================================
 
-            List<LoginLocation> previousLocations = loginLocationService.getByEmployeeId(employee.getUserId());
-            LoginLocation previousToday = previousLocations.stream()
-                    .filter(row -> LocalDate.now().equals(row.getLoginDate()))
-                    .findFirst().orElse(null);
+            LocalDate businessDate = LocalDate.now(java.time.ZoneId.of(businessZone));
+            LoginLocation previousToday = loginLocationService.latestForDay(employee.getUserId(), businessDate).orElse(null);
             boolean notifyMode = previousToday == null || !workMode.equalsIgnoreCase(previousToday.getWorkMode());
 
             LoginLocation loginLocation = LoginLocation.builder()
@@ -305,8 +319,8 @@ public class AuthRestController {
                     .distanceFromOffice(distance)
                     .workMode(workMode)
                     .loginStatus("SUCCESS")
-                    .loginDate(LocalDate.now())
-                    .loginTime(loginTime)
+                    .loginDate(businessDate)
+                    .loginTime(LocalDateTime.now(java.time.ZoneId.of(businessZone)))
                     .build();
             loginLocationService.save(loginLocation);
             if (notifyMode) notifyWorkMode(employee, workMode, loginTime, distance);
@@ -359,25 +373,12 @@ public class AuthRestController {
             );
 
 
-            System.out.println();
-            System.out.println("================================================");
-            System.out.println("LOGIN SUCCESS");
-            System.out.println("================================================");
-            System.out.println("User ID  : "
-                    + employee.getUserId());
-            System.out.println("Role     : "
-                    + role);
-            System.out.println("WorkMode : "
-                    + workMode);
-            System.out.println("================================================");
-
-
             return ResponseEntity.ok(response);
 
 
         } catch (Exception ex) {
 
-            ex.printStackTrace();
+            log.warn("Authentication workflow failed: {}", ex.getClass().getSimpleName());
 
             return ResponseEntity
                     .status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -750,7 +751,7 @@ public class AuthRestController {
 
             Optional<UserSession> optionalSession =
                     userSessionRepository
-                            .findByJwtToken(token);
+                            .findByJwtToken(SessionFingerprint.of(token));
 
 
             if (optionalSession.isPresent()) {
@@ -806,7 +807,7 @@ public class AuthRestController {
 
         } catch (Exception ex) {
 
-            ex.printStackTrace();
+            log.warn("Authentication workflow failed: {}", ex.getClass().getSimpleName());
 
             return ResponseEntity
                     .status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -844,7 +845,7 @@ public class AuthRestController {
             for (Long recipientId : recipientIds) notificationService.createNotification(recipientId, message);
         } catch (Exception notificationError) {
             // A notification outage must not prevent successful login or attendance recording.
-            System.err.println("Unable to send login work-mode notifications: " + notificationError.getMessage());
+            System.err.println("Unable to send login work-mode notifications: " + notificationError.getClass().getSimpleName());
         }
     }
 
@@ -891,7 +892,7 @@ public class AuthRestController {
 
         } catch (Exception ex) {
             /* Attendance failure should not prevent successful authentication. */
-            ex.printStackTrace();
+            log.warn("Authentication workflow failed: {}", ex.getClass().getSimpleName());
         }
     }
 
@@ -1048,7 +1049,7 @@ public class AuthRestController {
 
             if (session.getJwtToken() != null &&
                     !session.getJwtToken().equals(
-                            currentToken
+                            SessionFingerprint.of(currentToken)
                     ) &&
                     Boolean.TRUE.equals(
                             session.getIsActive()
@@ -1274,6 +1275,7 @@ public class AuthRestController {
     // ============================================================
 
     @PostMapping("/change-password")
+    @org.springframework.transaction.annotation.Transactional
     public ResponseEntity<?> changePassword(
             @RequestBody ChangePasswordRequest request,
             Authentication authentication) {
@@ -1318,6 +1320,11 @@ public class AuthRestController {
         }
 
 
+        if (!EmployeeManagementSystem.service.PasswordResetService.validPassword(request.getNewPassword())) {
+            return ResponseEntity.badRequest().body(errorResponse(
+                    "Use at least 12 characters including a letter and number, within 72 UTF-8 bytes."));
+        }
+
         String storedPassword =
                 employee.getPassword();
 
@@ -1349,6 +1356,7 @@ public class AuthRestController {
 
         // Password rotation invalidates every existing JWT session for this employee.
         userSessionRepository.deactivateEmployeeSessions(employee.getUserId());
+        invitationService.revokeRecoveryLinks(employee.getId());
 
         return ResponseEntity.ok(
                 java.util.Map.of(
@@ -1403,7 +1411,7 @@ public class AuthRestController {
 
             boolean current =
                     currentToken != null &&
-                            currentToken.equals(
+                            SessionFingerprint.of(currentToken).equals(
                                     session.getJwtToken()
                             );
 
@@ -1767,7 +1775,7 @@ public class AuthRestController {
              * Activity logging must never break
              * authentication or logout.
              */
-            ex.printStackTrace();
+            log.warn("Authentication workflow failed: {}", ex.getClass().getSimpleName());
         }
     }
 }

@@ -134,13 +134,10 @@ public class EmployeeReportServiceImpl implements EmployeeReportService {
 
     @Override
     public EmployeeReportDTO getEmployeeDetail(Long profileId) {
-        System.out.println("=== FETCHING EMPLOYEE DETAIL ===");
-        System.out.println("Profile ID: " + profileId);
 
         EmployeeProfile profile = employeeProfileRepository.findByIdWithAllDetails(profileId)
                 .orElseThrow(() -> new RuntimeException("Employee profile not found with id: " + profileId));
 
-        System.out.println("Employee found: " + profile.getFullName());
         return convertToEmployeeReportDTO(profile);
     }
 }

@@ -14,7 +14,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
-import org.jspecify.annotations.Nullable;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -158,7 +158,7 @@ public class EmployeeProfileServiceImpl implements EmployeeProfileService {
             String departmentName = department.getDepartmentName();
             return employeeProfileRepository.findByDepartment(departmentName);
         } catch (Exception e) {
-            System.err.println("Error fetching employee profiles by department ID: " + e.getMessage());
+            System.err.println("Error fetching employee profiles by department (type=" + e.getClass().getSimpleName() + ")");
             return new ArrayList<>();
         }
     }

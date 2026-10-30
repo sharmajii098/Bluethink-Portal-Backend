@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 import java.net.*;
 import java.net.http.*;
+import java.io.InputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.*;
@@ -14,6 +16,7 @@ import java.util.stream.Collectors;
 public class CalendarHttpClient {
  private final HttpClient http=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).followRedirects(HttpClient.Redirect.NEVER).build();
  private final ObjectMapper json=new ObjectMapper();
+ private static final int MAX_RESPONSE_BYTES = 1_048_576;
  public record Result(int status,Map<String,Object> body){}
  public static final class RemoteFailure extends RuntimeException {
   public final int status;
@@ -40,10 +43,26 @@ public class CalendarHttpClient {
   if(body!=null)builder.header("Content-Type",contentType);
   builder.method(method,body==null?HttpRequest.BodyPublishers.noBody():HttpRequest.BodyPublishers.ofString(body,StandardCharsets.UTF_8));
   try {
-   HttpResponse<String> response=http.send(builder.build(),HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-   String value=response.body();if(value.length()>1048576)throw new RemoteFailure(502);
-   Map<String,Object> data=value.isBlank()?Map.of():json.readValue(value,new TypeReference<Map<String,Object>>(){});
-   return new Result(response.statusCode(),data);
+   // Limit bytes while streaming. A post-download String.length() check allows an untrusted
+   // calendar endpoint to buffer an arbitrarily large response before rejecting it.
+   HttpResponse<InputStream> response=http.send(builder.build(),HttpResponse.BodyHandlers.ofInputStream());
+   int status=response.statusCode();
+   byte[] raw;
+   try(InputStream stream=response.body()) {
+    raw=stream.readNBytes(MAX_RESPONSE_BYTES+1);
+   }
+   if(raw.length>MAX_RESPONSE_BYTES)throw new RemoteFailure(502);
+   String value=new String(raw,StandardCharsets.UTF_8);
+   if(value.isBlank())return new Result(status,Map.of());
+   try {
+    Map<String,Object> data=json.readValue(value,new TypeReference<Map<String,Object>>(){});
+    return new Result(status,data==null?Map.of():data);
+   }catch(IOException invalidJson){
+    // Error responses can be HTML (e.g. a vendor proxy's 404/429 page). Preserve the
+    // actual HTTP status, so deletion can correctly treat 404 as already removed.
+    if(status<200||status>=300)return new Result(status,Map.of());
+    throw new RemoteFailure(502);
+   }
   }catch(InterruptedException e){Thread.currentThread().interrupt();throw new RemoteFailure(503);}
   catch(java.io.IOException|IllegalArgumentException e){throw new RemoteFailure(502);}
  }
