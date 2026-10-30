@@ -1,0 +1,30 @@
+name: RC4 Backend - Build and Tests
+on:
+  push:
+    branches:
+      - rc4-upgrade-20261030t081419z
+  pull_request:
+    branches:
+      - main
+permissions:
+  contents: read
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Run all backend tests and verify
+        run: bash mvnw -B -ntp clean verify
+      - name: Upload test result evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rc4-backend-test-results
+          path: target/surefire-reports/
+          if-no-files-found: ignore
